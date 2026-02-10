@@ -12,7 +12,7 @@
 - ARCHITECTURE.md updated with options sleeve and data flow
 
 ## Blockers
-- IBKR Account: Create account at interactivebrokers.com, enable paper trading
+- ~~IBKR Account~~ DONE -- Paper account DUP552385, TWS API port 7497 (default)
 - Discord Setup: Create server/channel, create webhook URL
 - Azure Resources: Create Cosmos DB, Functions, Key Vault (Before Week 3)
 - Polygon.io: Sign up for Stocks Starter plan ($29/month) -- needed for Week 5
