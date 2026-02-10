@@ -23,11 +23,11 @@ var config = Options.Create(new IBKRConfig
 
 using var service = new IBKRBrokerService(logger, config);
 
-Console.WriteLine("=== IBKR Smoke Test ===");
+Console.WriteLine("=== IBKR Smoke Test (8 tests) ===");
 Console.WriteLine();
 
 // 1. Connect
-Console.WriteLine("[1/5] Connecting to TWS...");
+Console.WriteLine("[1/8] Connecting to TWS...");
 try
 {
     var connected = await service.ConnectAsync();
@@ -47,7 +47,7 @@ catch (Exception ex)
 Console.WriteLine();
 
 // 2. Get Account
-Console.WriteLine("[2/5] Getting account summary...");
+Console.WriteLine("[2/8] Getting account summary...");
 try
 {
     var account = await service.GetAccountAsync();
@@ -65,7 +65,7 @@ catch (Exception ex)
 Console.WriteLine();
 
 // 3. Get Positions
-Console.WriteLine("[3/5] Getting positions...");
+Console.WriteLine("[3/8] Getting positions...");
 try
 {
     var positions = await service.GetPositionsAsync();
@@ -85,7 +85,7 @@ catch (Exception ex)
 Console.WriteLine();
 
 // 4. Get Quote
-Console.WriteLine("[4/5] Getting AAPL quote (snapshot)...");
+Console.WriteLine("[4/8] Getting AAPL quote (snapshot)...");
 try
 {
     var quote = await service.GetQuoteAsync("AAPL");
@@ -101,7 +101,7 @@ catch (Exception ex)
 Console.WriteLine();
 
 // 5. Get Historical Bars
-Console.WriteLine("[5/5] Getting SPY 30-day daily bars...");
+Console.WriteLine("[5/8] Getting SPY 30-day daily bars...");
 try
 {
     var endDate = DateTime.UtcNow;
@@ -119,6 +119,79 @@ try
 catch (Exception ex)
 {
     Console.WriteLine($"FAIL: {ex.Message}");
+}
+
+Console.WriteLine();
+
+// 6. Place Limit Order (very low price so it won't fill)
+Console.WriteLine("[6/8] Placing limit buy: 1 VIG @ $1.00...");
+string? placedBrokerId = null;
+try
+{
+    var order = new Order
+    {
+        Symbol = "VIG",
+        Action = OrderAction.Buy,
+        Quantity = 1,
+        OrderType = OrderType.Limit,
+        LimitPrice = 1.00m,
+        TimeInForce = TimeInForce.Day,
+        Sleeve = SleeveType.Income,
+        Rationale = "Smoke test order"
+    };
+
+    var result = await service.PlaceOrderAsync(order);
+    placedBrokerId = result.BrokerId;
+    Console.WriteLine($"  OK: BrokerId={result.BrokerId}, Status={result.Status}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FAIL: {ex.Message}");
+}
+
+Console.WriteLine();
+
+// 7. Get Open Orders
+Console.WriteLine("[7/8] Getting open orders...");
+try
+{
+    var openOrders = await service.GetOpenOrdersAsync();
+    Console.WriteLine($"  OK: {openOrders.Count} open order(s)");
+    foreach (var oo in openOrders)
+    {
+        Console.WriteLine($"      {oo.BrokerId}: {oo.Action} {oo.Quantity} {oo.Symbol} {oo.OrderType} @ {oo.LimitPrice} [{oo.Status}]");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FAIL: {ex.Message}");
+}
+
+Console.WriteLine();
+
+// 8. Cancel the order
+Console.WriteLine("[8/8] Cancelling the order...");
+if (placedBrokerId != null)
+{
+    try
+    {
+        var cancelled = await service.CancelOrderAsync(placedBrokerId);
+        Console.WriteLine($"  OK: Cancel request sent (result={cancelled})");
+        await Task.Delay(1500); // Wait for cancel confirmation
+
+        // Verify it's gone from open orders
+        var remaining = await service.GetOpenOrdersAsync();
+        var stillOpen = remaining.Any(o => o.BrokerId == placedBrokerId);
+        Console.WriteLine($"  OK: Order still in open orders = {stillOpen}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"FAIL: {ex.Message}");
+    }
+}
+else
+{
+    Console.WriteLine("  SKIP: No order was placed to cancel");
 }
 
 Console.WriteLine();
