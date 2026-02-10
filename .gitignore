@@ -117,3 +117,6 @@ temp/
 *.sqlite3
 *.mdf
 *.ldf
+
+# Local JSON storage (runtime data)
+data/
