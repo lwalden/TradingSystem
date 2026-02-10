@@ -1,0 +1,88 @@
+{
+  "permissions": {
+    "allow": [
+      // Version control
+      "Bash(git:*)",
+      "Bash(gh:*)",
+
+      // Shell utilities (safe operations)
+      "Bash(ls:*)",
+      "Bash(dir:*)",
+      "Bash(pwd:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(touch:*)",
+      "Bash(ln:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(diff:*)",
+      "Bash(file:*)",
+      "Bash(stat:*)",
+      "Bash(du:*)",
+      "Bash(df:*)",
+      "Bash(echo:*)",
+      "Bash(printf:*)",
+      "Bash(env:*)",
+      "Bash(which:*)",
+      "Bash(where:*)",
+      "Bash(type:*)",
+      "Bash(date:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(jq:*)",
+      "Bash(yq:*)",
+      "Bash(cut:*)",
+      "Bash(tr:*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)",
+      "Bash(xargs:*)",
+      "Bash(tee:*)",
+      "Bash(unzip:*)",
+      "Bash(zip:*)",
+      "Bash(tar:*)",
+      "Bash(gzip:*)",
+      "Bash(gunzip:*)",
+      "Bash(base64:*)",
+      "Bash(sha256sum:*)",
+      "Bash(shasum:*)",
+      "Bash(openssl:*)",
+
+      // Containers & orchestration
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+
+      // .NET build tools
+      "Bash(dotnet:*)",
+
+      // Build & test
+      "Bash(make:*)",
+
+      // Cloud CLIs
+      "Bash(az:*)",
+
+      // Environment & platform tools
+      "Bash(winget:*)",
+      "Bash(choco:*)",
+      "Bash(scoop:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(pwsh:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(wsl:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /:*)",
+      "Bash(rm -rf ~:*)",
+      "Bash(rm -rf C::*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)"
+    ]
+  }
+}
