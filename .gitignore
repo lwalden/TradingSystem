@@ -1,0 +1,119 @@
+# Environment and Secrets
+.env
+.env.local
+.env.*.local
+*.env
+.envrc
+.secrets
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Local configuration (keep .example versions)
+local.settings.json
+appsettings.Development.json
+appsettings.Local.json
+*.local.json
+config.local.*
+
+# IDE and Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build outputs
+bin/
+obj/
+out/
+dist/
+build/
+target/
+*.dll
+*.exe
+*.pdb
+*.mdb
+*.so
+*.dylib
+
+# Test and Coverage
+coverage/
+*.lcov
+.nyc_output/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+test-results/
+TestResults/
+
+# Logs
+logs/
+*.log
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# .NET
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Azure
+.azure/
+azurite/
+__azurite*
+__blobstorage__/
+__queuestorage__/
+__tablestorage__/
+
+# Docker
+.docker/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# Cache
+.cache/
+*.cache
+*.tsbuildinfo
+
+# Debug
+.debug/
+*.dmp
+
+# Local development databases
+*.db
+*.sqlite
+*.sqlite3
+*.mdf
+*.ldf
