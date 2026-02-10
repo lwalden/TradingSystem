@@ -39,7 +39,7 @@ internal class IBKRCallbackHandler : DefaultEWrapper
 
     // Open orders batch request (global, no reqId)
     private TaskCompletionSource<List<OrderData>>? _openOrdersTcs;
-    private List<OrderData> _openOrdersBuffer = new();
+    private Dictionary<int, OrderData> _openOrdersBuffer = new();
     private readonly object _openOrdersLock = new();
 
     // Events
@@ -108,7 +108,7 @@ internal class IBKRCallbackHandler : DefaultEWrapper
     {
         lock (_openOrdersLock)
         {
-            _openOrdersBuffer = new List<OrderData>();
+            _openOrdersBuffer = new Dictionary<int, OrderData>();
             _openOrdersTcs = new TaskCompletionSource<List<OrderData>>(TaskCreationOptions.RunContinuationsAsynchronously);
             return _openOrdersTcs.Task;
         }
@@ -311,12 +311,12 @@ internal class IBKRCallbackHandler : DefaultEWrapper
             tcs.TrySetResult(orderData);
         }
 
-        // Accumulate for open orders batch request
+        // Accumulate for open orders batch request (dedup by orderId)
         lock (_openOrdersLock)
         {
             if (_openOrdersTcs != null)
             {
-                _openOrdersBuffer.Add(orderData);
+                _openOrdersBuffer[orderId] = orderData;
             }
         }
     }
@@ -346,7 +346,7 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         _logger.LogDebug("IBKR openOrderEnd");
         lock (_openOrdersLock)
         {
-            _openOrdersTcs?.TrySetResult(new List<OrderData>(_openOrdersBuffer));
+            _openOrdersTcs?.TrySetResult(new List<OrderData>(_openOrdersBuffer.Values));
         }
     }
 
