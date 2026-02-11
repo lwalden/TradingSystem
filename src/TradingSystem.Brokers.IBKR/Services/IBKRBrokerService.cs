@@ -23,6 +23,7 @@ public class IBKRBrokerService : IBrokerService, IDisposable
     private volatile bool _isConnected;
     private bool _disposed;
     private CancellationTokenSource? _messagePumpCts;
+    private int _nextOrderId;
 
     private static readonly string AccountSummaryTags =
         "NetLiquidation,TotalCashValue,BuyingPower,GrossPositionValue,MaintMarginReq,InitMarginReq,AvailableFunds";
@@ -93,6 +94,7 @@ public class IBKRBrokerService : IBrokerService, IDisposable
                 () => _logger.LogError("IBKR connection timed out waiting for nextValidId"));
 
             _isConnected = true;
+            _nextOrderId = _callbackHandler.NextValidOrderId;
             _logger.LogInformation("Connected to IBKR successfully (nextValidOrderId={OrderId})",
                 _callbackHandler.NextValidOrderId);
             return true;
@@ -253,30 +255,182 @@ public class IBKRBrokerService : IBrokerService, IDisposable
         throw new NotImplementedException("Options analytics is planned for Phase 1, Week 5-6.");
     }
 
-    public Task<Order> PlaceOrderAsync(Order order, CancellationToken cancellationToken = default)
+    public async Task<Order> PlaceOrderAsync(Order order, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Order placement is planned for Phase 1, Week 3-4.");
+        EnsureConnected();
+
+        var orderId = Interlocked.Increment(ref _nextOrderId);
+        order.BrokerId = orderId.ToString();
+
+        var contract = IBKRContractFactory.CreateStock(order.Symbol);
+        var ibOrder = IBKROrderFactory.CreateOrder(order);
+        ibOrder.OrderId = orderId;
+
+        var task = _callbackHandler.RegisterOrderPlacementRequest(orderId);
+
+        try
+        {
+            _logger.LogInformation("Placing order {OrderId}: {Action} {Qty} {Symbol} {Type} @ {Price}",
+                orderId, order.Action, order.Quantity, order.Symbol, order.OrderType, order.LimitPrice);
+
+            _clientSocket!.placeOrder(orderId, contract, ibOrder);
+
+            var result = await _requestManager.WithTimeout(
+                task,
+                _config.RequestTimeout,
+                cancellationToken);
+
+            order.Status = IBKRMappingExtensions.ToOrderStatus(result.Status);
+            order.SubmittedAt = DateTime.UtcNow;
+            order.LastUpdated = DateTime.UtcNow;
+
+            _logger.LogInformation("Order {OrderId} accepted: status={Status}", orderId, result.Status);
+            return order;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            order.Status = OrderStatus.Error;
+            order.LastUpdated = DateTime.UtcNow;
+            _logger.LogError(ex, "Failed to place order {OrderId}", orderId);
+            throw;
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(orderId);
+        }
     }
 
-    public Task<Order> GetOrderStatusAsync(string orderId, CancellationToken cancellationToken = default)
+    public async Task<Order> GetOrderStatusAsync(string orderId, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Order status tracking is planned for Phase 1, Week 3-4.");
+        EnsureConnected();
+
+        // Request all open orders and find the matching one
+        var openOrders = await GetOpenOrdersAsync(cancellationToken);
+        var match = openOrders.FirstOrDefault(o => o.BrokerId == orderId);
+        if (match != null)
+            return match;
+
+        throw new InvalidOperationException($"Order {orderId} not found in open orders");
     }
 
-    public Task<List<Order>> GetOpenOrdersAsync(CancellationToken cancellationToken = default)
+    public async Task<List<Order>> GetOpenOrdersAsync(CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Open orders retrieval is planned for Phase 1, Week 3-4.");
+        EnsureConnected();
+
+        var task = _callbackHandler.RegisterOpenOrdersRequest();
+
+        try
+        {
+            _clientSocket!.reqAllOpenOrders();
+
+            var orderDataList = await _requestManager.WithTimeout(
+                task,
+                _config.RequestTimeout,
+                cancellationToken);
+
+            return orderDataList.Select(od => new Order
+            {
+                BrokerId = od.OrderId.ToString(),
+                Symbol = od.Symbol,
+                SecurityType = od.SecType,
+                Action = MapIBKRAction(od.Action),
+                Quantity = od.TotalQuantity,
+                OrderType = MapIBKROrderType(od.OrderType),
+                LimitPrice = od.LmtPrice < double.MaxValue ? (decimal)od.LmtPrice : null,
+                StopPrice = od.AuxPrice < double.MaxValue ? (decimal)od.AuxPrice : null,
+                Status = IBKRMappingExtensions.ToOrderStatus(od.Status),
+                FilledQuantity = od.Filled,
+                LastUpdated = DateTime.UtcNow
+            }).ToList();
+        }
+        finally
+        {
+            // Open orders request has no cleanup (global request)
+        }
     }
 
-    public Task<bool> CancelOrderAsync(string orderId, CancellationToken cancellationToken = default)
+    public async Task<bool> CancelOrderAsync(string orderId, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Order cancellation is planned for Phase 1, Week 3-4.");
+        EnsureConnected();
+
+        if (!int.TryParse(orderId, out var ibOrderId))
+            throw new ArgumentException($"Invalid order ID: {orderId}", nameof(orderId));
+
+        _logger.LogInformation("Cancelling order {OrderId}", ibOrderId);
+
+        _clientSocket!.cancelOrder(ibOrderId, new OrderCancel());
+
+        // Wait briefly for the status callback -- cancellation is confirmed via orderStatus callback
+        // but we don't block on it; the caller can check status separately
+        await Task.Delay(500, cancellationToken);
+        return true;
     }
 
-    public Task<Order> ModifyOrderAsync(string orderId, decimal? newLimitPrice = null,
+    public async Task<Order> ModifyOrderAsync(string orderId, decimal? newLimitPrice = null,
         decimal? newQuantity = null, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Order modification is planned for Phase 1, Week 3-4.");
+        EnsureConnected();
+
+        if (!int.TryParse(orderId, out var ibOrderId))
+            throw new ArgumentException($"Invalid order ID: {orderId}", nameof(orderId));
+
+        // To modify, we need the original order details -- get from open orders
+        var openOrders = await GetOpenOrdersAsync(cancellationToken);
+        var existing = openOrders.FirstOrDefault(o => o.BrokerId == orderId)
+            ?? throw new InvalidOperationException($"Order {orderId} not found in open orders");
+
+        if (newLimitPrice.HasValue)
+            existing.LimitPrice = newLimitPrice;
+        if (newQuantity.HasValue)
+            existing.Quantity = newQuantity.Value;
+
+        var contract = IBKRContractFactory.CreateStock(existing.Symbol);
+        var ibOrder = IBKROrderFactory.CreateOrder(existing);
+        ibOrder.OrderId = ibOrderId;
+
+        var task = _callbackHandler.RegisterOrderPlacementRequest(ibOrderId);
+
+        try
+        {
+            _clientSocket!.placeOrder(ibOrderId, contract, ibOrder);
+
+            var result = await _requestManager.WithTimeout(
+                task,
+                _config.RequestTimeout,
+                cancellationToken);
+
+            existing.Status = IBKRMappingExtensions.ToOrderStatus(result.Status);
+            existing.LastUpdated = DateTime.UtcNow;
+            return existing;
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(ibOrderId);
+        }
+    }
+
+    private static OrderAction MapIBKRAction(string action)
+    {
+        return action switch
+        {
+            "BUY" => OrderAction.Buy,
+            "SELL" => OrderAction.Sell,
+            "SSHORT" => OrderAction.SellShort,
+            _ => OrderAction.Buy
+        };
+    }
+
+    private static OrderType MapIBKROrderType(string orderType)
+    {
+        return orderType switch
+        {
+            "MKT" => OrderType.Market,
+            "LMT" => OrderType.Limit,
+            "STP" => OrderType.Stop,
+            "STP LMT" => OrderType.StopLimit,
+            "TRAIL" => OrderType.TrailingStop,
+            _ => OrderType.Market
+        };
     }
 
     public Task<SecurityCalendar> GetSecurityCalendarAsync(string symbol,

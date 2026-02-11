@@ -106,6 +106,21 @@ internal static class IBKRMappingExtensions
         return $"{years} Y";
     }
 
+    public static OrderStatus ToOrderStatus(string ibkrStatus)
+    {
+        return ibkrStatus switch
+        {
+            "PendingSubmit" => OrderStatus.PendingSubmit,
+            "PreSubmitted" => OrderStatus.Submitted,
+            "Submitted" => OrderStatus.Submitted,
+            "Filled" => OrderStatus.Filled,
+            "Cancelled" => OrderStatus.Cancelled,
+            "ApiCancelled" => OrderStatus.Cancelled,
+            "Inactive" => OrderStatus.Rejected,
+            _ => OrderStatus.Error
+        };
+    }
+
     private static DateTime ParseBarDate(string dateStr)
     {
         if (DateTime.TryParseExact(dateStr, "yyyyMMdd", CultureInfo.InvariantCulture,
