@@ -16,4 +16,8 @@
     <ProjectReference Include="..\TradingSystem.Core\TradingSystem.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="TradingSystem.Tests" />
+  </ItemGroup>
+
 </Project>
