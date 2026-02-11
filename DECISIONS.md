@@ -119,6 +119,34 @@
 
 ---
 
+### ADR-016: Polygon.io as Separate Project
+**Date:** 2026-02-10 | **Status:** Decided | **Rationale:** Polygon.io is an external data source with its own HTTP client, rate limiting, and DTOs. Separate project keeps boundaries clean and allows independent testing.
+**Decision:** `TradingSystem.MarketData.Polygon` as a separate project referencing Core.
+**Consequences:** Additional project in solution. Clean dependency graph.
+
+---
+
+### ADR-017: CachingMarketDataService Location
+**Date:** 2026-02-10 | **Status:** Decided | **Rationale:** The service orchestrates broker calls with caching and regime detection — it's strategy-layer logic, not broker-layer.
+**Decision:** `CachingMarketDataService` lives in `TradingSystem.Strategies/Services/`.
+**Consequences:** Strategies project depends on Core interfaces only, not on IBKR directly.
+
+---
+
+### ADR-018: IV History Persistence
+**Date:** 2026-02-10 | **Status:** Decided | **Rationale:** IV history is expensive to fetch (1-year of daily data from IBKR). Caching to JSON avoids repeated API calls within the same trading day.
+**Decision:** IV history persisted to JSON files per symbol, expires daily (stale if `LastUpdated.Date < DateTime.Today`).
+**Consequences:** Requires `TradingSystem.Storage` dependency. First call each day is slow; subsequent calls are fast.
+
+---
+
+### ADR-019: IBKR Option Chain Pacing
+**Date:** 2026-02-10 | **Status:** Decided | **Rationale:** IBKR enforces 50 concurrent market data requests. Need headroom for other data needs.
+**Decision:** SemaphoreSlim(45) + 100ms delay between option snapshot requests.
+**Consequences:** Option chain retrieval is throttled but stays within IBKR limits. Full chain scan takes ~5-15 seconds depending on strike count.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
