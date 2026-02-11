@@ -121,7 +121,52 @@ internal static class IBKRMappingExtensions
         };
     }
 
-    private static DateTime ParseBarDate(string dateStr)
+    public static OptionChainDefinition ToOptionChainDefinition(
+        this SecurityDefOptParamsData data, string underlyingSymbol)
+    {
+        return new OptionChainDefinition
+        {
+            UnderlyingSymbol = underlyingSymbol,
+            UnderlyingConId = data.UnderlyingConId,
+            Exchange = data.Exchange,
+            TradingClass = data.TradingClass,
+            Multiplier = data.Multiplier,
+            Expirations = data.Expirations
+                .Select(e => DateTime.ParseExact(e, "yyyyMMdd", CultureInfo.InvariantCulture))
+                .OrderBy(d => d)
+                .ToList(),
+            Strikes = data.Strikes
+                .Where(s => s > 0 && s < double.MaxValue)
+                .Select(s => (decimal)s)
+                .OrderBy(s => s)
+                .ToList()
+        };
+    }
+
+    public static OptionContract ToOptionContract(this OptionQuoteData data)
+    {
+        return new OptionContract
+        {
+            Symbol = $"{data.UnderlyingSymbol} {data.Expiration:yyMMdd}{data.Right}{data.Strike:F0}",
+            UnderlyingSymbol = data.UnderlyingSymbol,
+            Strike = data.Strike,
+            Expiration = data.Expiration,
+            Right = data.Right == "C" ? OptionRight.Call : OptionRight.Put,
+            Bid = data.Bid,
+            Ask = data.Ask,
+            Last = data.Last,
+            Volume = data.OptionVolume,
+            OpenInterest = data.OpenInterest,
+            Delta = data.Delta.HasValue ? (decimal)data.Delta.Value : null,
+            Gamma = data.Gamma.HasValue ? (decimal)data.Gamma.Value : null,
+            Theta = data.Theta.HasValue ? (decimal)data.Theta.Value : null,
+            Vega = data.Vega.HasValue ? (decimal)data.Vega.Value : null,
+            ImpliedVolatility = data.ImpliedVolatility.HasValue ? (decimal)data.ImpliedVolatility.Value : null,
+            Timestamp = DateTime.UtcNow
+        };
+    }
+
+    public static DateTime ParseBarDate(string dateStr)
     {
         if (DateTime.TryParseExact(dateStr, "yyyyMMdd", CultureInfo.InvariantCulture,
             DateTimeStyles.None, out var date))

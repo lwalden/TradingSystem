@@ -241,18 +241,203 @@ public class IBKRBrokerService : IBrokerService, IDisposable
         }
     }
 
-    // === Not yet implemented (Phase 2+) ===
+    // === Options ===
 
-    public Task<List<OptionContract>> GetOptionChainAsync(string underlying,
+    public async Task<List<OptionContract>> GetOptionChainAsync(string underlying,
         DateTime? expiration = null, CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Option chain retrieval is planned for Phase 1, Week 5-6.");
+        EnsureConnected();
+
+        // Step 1: Discover available expirations and strikes
+        var reqId = _requestManager.GetNextRequestId();
+        var defTask = _callbackHandler.RegisterSecDefOptParamsRequest(reqId);
+
+        try
+        {
+            _clientSocket!.reqSecDefOptParams(reqId, underlying, "", "STK", 0);
+
+            var paramsList = await _requestManager.WithTimeout(
+                defTask, _config.RequestTimeout, cancellationToken);
+
+            // Pick the SMART exchange params (or first available)
+            var smartParams = paramsList.FirstOrDefault(p => p.Exchange == "SMART")
+                              ?? paramsList.FirstOrDefault();
+            if (smartParams == null)
+            {
+                _logger.LogWarning("No option chain definitions found for {Symbol}", underlying);
+                return new List<OptionContract>();
+            }
+
+            var chainDef = smartParams.ToOptionChainDefinition(underlying);
+
+            // Step 2: Filter expirations to relevant DTE range
+            var today = DateTime.Today;
+            var relevantExpirations = chainDef.Expirations
+                .Where(e =>
+                {
+                    var dte = (e - today).Days;
+                    return dte >= _config.OptionChainMinDTE && dte <= _config.OptionChainMaxDTE;
+                })
+                .ToList();
+
+            if (expiration.HasValue)
+                relevantExpirations = relevantExpirations
+                    .Where(e => e.Date == expiration.Value.Date).ToList();
+
+            if (relevantExpirations.Count == 0)
+            {
+                _logger.LogWarning("No expirations in DTE range {Min}-{Max} for {Symbol}",
+                    _config.OptionChainMinDTE, _config.OptionChainMaxDTE, underlying);
+                return new List<OptionContract>();
+            }
+
+            // Step 3: Filter strikes to ATM +/- 15%
+            var underlyingQuote = await GetQuoteAsync(underlying, cancellationToken);
+            var underlyingPrice = underlyingQuote.Last > 0 ? underlyingQuote.Last
+                : (underlyingQuote.Bid + underlyingQuote.Ask) / 2;
+            var strikeRange = underlyingPrice * 0.15m;
+
+            var relevantStrikes = chainDef.Strikes
+                .Where(s => Math.Abs(s - underlyingPrice) <= strikeRange)
+                .ToList();
+
+            // Step 4: Fetch Greeks/IV for each contract with throttling
+            var throttle = new SemaphoreSlim(_config.MaxConcurrentOptionRequests);
+            var tasks = new List<Task<OptionContract?>>();
+
+            foreach (var exp in relevantExpirations)
+            {
+                foreach (var strike in relevantStrikes)
+                {
+                    foreach (var right in new[] { OptionRight.Call, OptionRight.Put })
+                    {
+                        tasks.Add(FetchOptionQuoteAsync(
+                            underlying, strike, exp, right, throttle, cancellationToken));
+                    }
+                }
+            }
+
+            var results = await Task.WhenAll(tasks);
+            var contracts = results.Where(r => r != null).ToList();
+
+            _logger.LogInformation(
+                "Retrieved {Count} option contracts for {Symbol} ({Exps} exps, {Strikes} strikes)",
+                contracts.Count, underlying, relevantExpirations.Count, relevantStrikes.Count);
+
+            return contracts!;
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(reqId);
+        }
     }
 
-    public Task<OptionsAnalytics> GetOptionsAnalyticsAsync(string symbol,
+    private async Task<OptionContract?> FetchOptionQuoteAsync(
+        string underlying, decimal strike, DateTime expiration, OptionRight right,
+        SemaphoreSlim throttle, CancellationToken cancellationToken)
+    {
+        await throttle.WaitAsync(cancellationToken);
+        try
+        {
+            await Task.Delay(_config.OptionQuoteDelayMs, cancellationToken);
+
+            var tickerId = _requestManager.GetNextRequestId();
+            var contract = IBKRContractFactory.CreateOption(underlying, strike, expiration, right);
+            var rightStr = right == OptionRight.Call ? "C" : "P";
+            var task = _callbackHandler.RegisterOptionQuoteRequest(
+                tickerId, underlying, strike, expiration, rightStr);
+
+            _clientSocket!.reqMktData(tickerId, contract, "", true, false, []);
+
+            try
+            {
+                var data = await _requestManager.WithTimeout(
+                    task, _config.RequestTimeout, cancellationToken);
+                return data.ToOptionContract();
+            }
+            catch (Exception ex) when (ex is TimeoutException or IBKRApiException)
+            {
+                _logger.LogDebug("Failed to fetch option quote {Symbol} {Strike} {Exp} {Right}: {Error}",
+                    underlying, strike, expiration.ToString("yyyyMMdd"), right, ex.Message);
+                return null;
+            }
+            finally
+            {
+                _clientSocket!.cancelMktData(tickerId);
+                _callbackHandler.CleanupRequest(tickerId);
+            }
+        }
+        finally
+        {
+            throttle.Release();
+        }
+    }
+
+    public async Task<OptionsAnalytics> GetOptionsAnalyticsAsync(string symbol,
         CancellationToken cancellationToken = default)
     {
-        throw new NotImplementedException("Options analytics is planned for Phase 1, Week 5-6.");
+        EnsureConnected();
+
+        // Fetch 1 year of historical IV data
+        var reqId = _requestManager.GetNextRequestId();
+        var contract = IBKRContractFactory.CreateStock(symbol);
+        var task = _callbackHandler.RegisterHistoricalDataRequest(reqId);
+
+        var endDateStr = DateTime.Now.ToString("yyyyMMdd-HH:mm:ss");
+
+        try
+        {
+            _clientSocket!.reqHistoricalData(
+                reqId, contract, endDateStr, "1 Y", "1 day",
+                "OPTION_IMPLIED_VOLATILITY", 1, 1, false, []);
+
+            var bars = await _requestManager.WithTimeout(
+                task, _config.RequestTimeout * 2, cancellationToken);
+
+            var ivHistory = bars
+                .Where(b => b.Close > 0)
+                .Select(b => new IVHistoryPoint
+                {
+                    Date = IBKRMappingExtensions.ParseBarDate(b.Time),
+                    ImpliedVolatility = (decimal)b.Close
+                })
+                .OrderBy(p => p.Date)
+                .ToList();
+
+            if (ivHistory.Count == 0)
+            {
+                _logger.LogWarning("No IV history data for {Symbol}", symbol);
+                return new OptionsAnalytics { Symbol = symbol, Timestamp = DateTime.UtcNow };
+            }
+
+            var currentIV = ivHistory.Last().ImpliedVolatility;
+            var high52 = ivHistory.Max(p => p.ImpliedVolatility);
+            var low52 = ivHistory.Min(p => p.ImpliedVolatility);
+
+            var ivRank = high52 != low52
+                ? (currentIV - low52) / (high52 - low52) * 100
+                : 50m;
+
+            var daysBelow = ivHistory.Count(p => p.ImpliedVolatility < currentIV);
+            var ivPercentile = (decimal)daysBelow / ivHistory.Count * 100;
+
+            return new OptionsAnalytics
+            {
+                Symbol = symbol,
+                CurrentIV = currentIV,
+                IVRank = Math.Round(Math.Clamp(ivRank, 0, 100), 1),
+                IVPercentile = Math.Round(ivPercentile, 1),
+                HistoricalVolatility20 = ivHistory.Count >= 20
+                    ? ivHistory.TakeLast(20).Average(p => p.ImpliedVolatility) : 0,
+                HistoricalVolatility60 = ivHistory.Count >= 60
+                    ? ivHistory.TakeLast(60).Average(p => p.ImpliedVolatility) : 0,
+                Timestamp = DateTime.UtcNow
+            };
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(reqId);
+        }
     }
 
     public async Task<Order> PlaceOrderAsync(Order order, CancellationToken cancellationToken = default)

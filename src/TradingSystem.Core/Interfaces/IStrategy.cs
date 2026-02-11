@@ -98,9 +98,12 @@ public enum StrategyType
     PullbackToValue,
     MeanReversion,
     
-    // Tactical options strategies
+    // Options strategies
     CashSecuredPut,
     CoveredCall,
     BearCallSpread,
-    BullPutSpread
+    BullPutSpread,
+    IronCondor,
+    CalendarSpread,
+    DiagonalSpread
 }
