@@ -169,3 +169,37 @@ public enum RegimeType
     RiskOff,    // High stress, defensive mode only
     Recovery    // Coming out of stress, gradually increase
 }
+
+/// <summary>
+/// Result of IBKR reqSecDefOptParams -- available expirations and strikes for an underlying.
+/// </summary>
+public class OptionChainDefinition
+{
+    public string UnderlyingSymbol { get; set; } = string.Empty;
+    public int UnderlyingConId { get; set; }
+    public string Exchange { get; set; } = string.Empty;
+    public string TradingClass { get; set; } = string.Empty;
+    public string Multiplier { get; set; } = "100";
+    public List<DateTime> Expirations { get; set; } = new();
+    public List<decimal> Strikes { get; set; } = new();
+}
+
+/// <summary>
+/// Historical IV data point for IV rank/percentile calculations.
+/// </summary>
+public class IVHistoryPoint
+{
+    public DateTime Date { get; set; }
+    public decimal ImpliedVolatility { get; set; }
+}
+
+/// <summary>
+/// Full IV history for a symbol, used for rank/percentile calculations.
+/// </summary>
+public class IVHistory
+{
+    public string Symbol { get; set; } = string.Empty;
+    public List<IVHistoryPoint> DataPoints { get; set; } = new();
+    public DateTime LastUpdated { get; set; }
+    public int TradingDays => DataPoints.Count;
+}

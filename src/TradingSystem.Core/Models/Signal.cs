@@ -28,10 +28,18 @@ public class Signal
     public decimal? SuggestedRiskAmount { get; set; } // In dollars
     public decimal? ExpectedRMultiple { get; set; }
     
-    // Options-specific
+    // Options-specific (single leg)
     public decimal? SuggestedStrike { get; set; }
     public DateTime? SuggestedExpiration { get; set; }
     public OptionRight? SuggestedRight { get; set; }
+
+    // Options-specific (multi-leg strategies)
+    public List<OptionLeg>? SuggestedLegs { get; set; }
+    public decimal? MaxProfit { get; set; }
+    public decimal? MaxLoss { get; set; }
+    public decimal? ProbabilityOfProfit { get; set; }
+    public decimal? IVRank { get; set; }
+    public decimal? IVPercentile { get; set; }
     
     // Context
     public string Rationale { get; set; } = string.Empty;
