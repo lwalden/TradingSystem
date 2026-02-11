@@ -223,8 +223,20 @@ public class IncomeUniverse
     
     public IncomeSecurity? GetBySymbol(string symbol)
     {
-        return Securities.FirstOrDefault(s => 
+        return Securities.FirstOrDefault(s =>
             s.Symbol.Equals(symbol, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public bool TryGetCategory(string symbol, out IncomeCategory category)
+    {
+        var security = GetBySymbol(symbol);
+        if (security != null)
+        {
+            category = security.Category;
+            return true;
+        }
+        category = default;
+        return false;
     }
 }
 
