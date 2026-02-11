@@ -34,9 +34,18 @@ internal class IBKRCallbackHandler : DefaultEWrapper
     private readonly ConcurrentDictionary<int, TaskCompletionSource<List<IBApi.Bar>>> _historicalDataRequests = new();
     private readonly ConcurrentDictionary<int, List<IBApi.Bar>> _historicalDataBuffers = new();
 
+    // Orders: keyed by orderId
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<OrderData>> _orderPlacementRequests = new();
+
+    // Open orders batch request (global, no reqId)
+    private TaskCompletionSource<List<OrderData>>? _openOrdersTcs;
+    private Dictionary<int, OrderData> _openOrdersBuffer = new();
+    private readonly object _openOrdersLock = new();
+
     // Events
     public event Action<int, int, string>? OnError;
     public event Action? OnConnectionClosed;
+    public event Action<int, OrderData>? OnOrderStatusChanged;
 
     // Informational error codes that are not real errors
     private static readonly HashSet<int> InfoErrorCodes = [2104, 2106, 2107, 2108, 2158];
@@ -88,6 +97,23 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         return tcs.Task;
     }
 
+    public Task<OrderData> RegisterOrderPlacementRequest(int orderId)
+    {
+        var tcs = new TaskCompletionSource<OrderData>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _orderPlacementRequests[orderId] = tcs;
+        return tcs.Task;
+    }
+
+    public Task<List<OrderData>> RegisterOpenOrdersRequest()
+    {
+        lock (_openOrdersLock)
+        {
+            _openOrdersBuffer = new Dictionary<int, OrderData>();
+            _openOrdersTcs = new TaskCompletionSource<List<OrderData>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _openOrdersTcs.Task;
+        }
+    }
+
     // === Cleanup ===
 
     public void CleanupRequest(int reqId)
@@ -98,6 +124,7 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         _quoteBuffers.TryRemove(reqId, out _);
         _historicalDataRequests.TryRemove(reqId, out _);
         _historicalDataBuffers.TryRemove(reqId, out _);
+        _orderPlacementRequests.TryRemove(reqId, out _);
     }
 
     public void CleanupPositionRequest()
@@ -257,6 +284,83 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         }
     }
 
+    // --- Orders ---
+
+    public override void openOrder(int orderId, Contract contract, IBApi.Order order, OrderState orderState)
+    {
+        var orderData = new OrderData
+        {
+            OrderId = orderId,
+            Symbol = contract.Symbol,
+            SecType = contract.SecType,
+            Action = order.Action,
+            TotalQuantity = order.TotalQuantity,
+            OrderType = order.OrderType,
+            LmtPrice = order.LmtPrice,
+            AuxPrice = order.AuxPrice,
+            Tif = order.Tif,
+            Status = orderState.Status
+        };
+
+        _logger.LogDebug("IBKR openOrder: orderId={OrderId} {Symbol} {Action} {Qty} {Type} status={Status}",
+            orderId, contract.Symbol, order.Action, order.TotalQuantity, order.OrderType, orderState.Status);
+
+        // Complete the placement TCS if waiting
+        if (_orderPlacementRequests.TryGetValue(orderId, out var tcs))
+        {
+            tcs.TrySetResult(orderData);
+        }
+
+        // Accumulate for open orders batch request (dedup by orderId)
+        lock (_openOrdersLock)
+        {
+            if (_openOrdersTcs != null)
+            {
+                _openOrdersBuffer[orderId] = orderData;
+            }
+        }
+    }
+
+    public override void orderStatus(int orderId, string status, decimal filled, decimal remaining,
+        double avgFillPrice, long permId, int parentId, double lastFillPrice, int clientId,
+        string whyHeld, double mktCapPrice)
+    {
+        _logger.LogDebug("IBKR orderStatus: orderId={OrderId} status={Status} filled={Filled} remaining={Remaining} avgPrice={AvgPrice}",
+            orderId, status, filled, remaining, avgFillPrice);
+
+        var update = new OrderData
+        {
+            OrderId = orderId,
+            Status = status,
+            Filled = filled,
+            Remaining = remaining,
+            AvgFillPrice = avgFillPrice,
+            WhyHeld = whyHeld ?? string.Empty
+        };
+
+        OnOrderStatusChanged?.Invoke(orderId, update);
+    }
+
+    public override void openOrderEnd()
+    {
+        _logger.LogDebug("IBKR openOrderEnd");
+        lock (_openOrdersLock)
+        {
+            _openOrdersTcs?.TrySetResult(new List<OrderData>(_openOrdersBuffer.Values));
+        }
+    }
+
+    public override void execDetails(int reqId, Contract contract, Execution execution)
+    {
+        _logger.LogDebug("IBKR execDetails: orderId={OrderId} {Symbol} {Side} {Shares}@{Price}",
+            execution.OrderId, contract.Symbol, execution.Side, execution.Shares, execution.Price);
+    }
+
+    public override void execDetailsEnd(int reqId)
+    {
+        _logger.LogDebug("IBKR execDetailsEnd: reqId={ReqId}", reqId);
+    }
+
     // --- Errors ---
 
     public override void error(Exception e)
@@ -302,6 +406,8 @@ internal class IBKRCallbackHandler : DefaultEWrapper
             quoteTcs.TrySetException(ex);
         if (_historicalDataRequests.TryGetValue(reqId, out var histTcs))
             histTcs.TrySetException(ex);
+        if (_orderPlacementRequests.TryGetValue(reqId, out var orderTcs))
+            orderTcs.TrySetException(ex);
     }
 
     private void FaultAllPendingRequests(Exception ex)
@@ -309,9 +415,14 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         foreach (var tcs in _accountSummaryRequests.Values) tcs.TrySetException(ex);
         foreach (var tcs in _quoteRequests.Values) tcs.TrySetException(ex);
         foreach (var tcs in _historicalDataRequests.Values) tcs.TrySetException(ex);
+        foreach (var tcs in _orderPlacementRequests.Values) tcs.TrySetException(ex);
         lock (_positionLock)
         {
             _positionTcs?.TrySetException(ex);
+        }
+        lock (_openOrdersLock)
+        {
+            _openOrdersTcs?.TrySetException(ex);
         }
     }
 }
