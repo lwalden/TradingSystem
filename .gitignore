@@ -120,3 +120,6 @@ temp/
 
 # Local JSON storage (runtime data)
 data/
+
+# Windows artifacts
+nul

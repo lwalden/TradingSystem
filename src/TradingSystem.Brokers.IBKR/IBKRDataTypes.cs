@@ -40,3 +40,43 @@ internal class QuoteData
     public decimal Low { get; set; }
     public decimal Close { get; set; }
 }
+
+/// <summary>
+/// Internal DTO for reqSecDefOptParams callback data.
+/// </summary>
+internal class SecurityDefOptParamsData
+{
+    public string Exchange { get; set; } = string.Empty;
+    public int UnderlyingConId { get; set; }
+    public string TradingClass { get; set; } = string.Empty;
+    public string Multiplier { get; set; } = "100";
+    public HashSet<string> Expirations { get; set; } = new();
+    public HashSet<double> Strikes { get; set; } = new();
+}
+
+/// <summary>
+/// Internal DTO for option quote data including Greeks.
+/// </summary>
+internal class OptionQuoteData
+{
+    public decimal Bid { get; set; }
+    public decimal Ask { get; set; }
+    public decimal Last { get; set; }
+    public int OpenInterest { get; set; }
+    public int OptionVolume { get; set; }
+
+    // Greeks from tickOptionComputation
+    public double? ImpliedVolatility { get; set; }
+    public double? Delta { get; set; }
+    public double? Gamma { get; set; }
+    public double? Theta { get; set; }
+    public double? Vega { get; set; }
+
+    // Contract identification for mapping back
+    public string UnderlyingSymbol { get; set; } = string.Empty;
+    public decimal Strike { get; set; }
+    public DateTime Expiration { get; set; }
+    public string Right { get; set; } = string.Empty; // "C" or "P"
+
+    public bool HasGreeks => ImpliedVolatility.HasValue && Delta.HasValue;
+}

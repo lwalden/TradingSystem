@@ -42,6 +42,14 @@ internal class IBKRCallbackHandler : DefaultEWrapper
     private Dictionary<int, OrderData> _openOrdersBuffer = new();
     private readonly object _openOrdersLock = new();
 
+    // Option chain definitions: keyed by reqId
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<List<SecurityDefOptParamsData>>> _secDefOptParamsRequests = new();
+    private readonly ConcurrentDictionary<int, List<SecurityDefOptParamsData>> _secDefOptParamsBuffers = new();
+
+    // Option quotes with Greeks: keyed by tickerId
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<OptionQuoteData>> _optionQuoteRequests = new();
+    private readonly ConcurrentDictionary<int, OptionQuoteData> _optionQuoteBuffers = new();
+
     // Events
     public event Action<int, int, string>? OnError;
     public event Action? OnConnectionClosed;
@@ -114,6 +122,30 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         }
     }
 
+    public Task<List<SecurityDefOptParamsData>> RegisterSecDefOptParamsRequest(int reqId)
+    {
+        var tcs = new TaskCompletionSource<List<SecurityDefOptParamsData>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _secDefOptParamsBuffers[reqId] = new List<SecurityDefOptParamsData>();
+        _secDefOptParamsRequests[reqId] = tcs;
+        return tcs.Task;
+    }
+
+    public Task<OptionQuoteData> RegisterOptionQuoteRequest(int tickerId,
+        string underlying, decimal strike, DateTime expiration, string right)
+    {
+        var tcs = new TaskCompletionSource<OptionQuoteData>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var data = new OptionQuoteData
+        {
+            UnderlyingSymbol = underlying,
+            Strike = strike,
+            Expiration = expiration,
+            Right = right
+        };
+        _optionQuoteBuffers[tickerId] = data;
+        _optionQuoteRequests[tickerId] = tcs;
+        return tcs.Task;
+    }
+
     // === Cleanup ===
 
     public void CleanupRequest(int reqId)
@@ -125,6 +157,10 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         _historicalDataRequests.TryRemove(reqId, out _);
         _historicalDataBuffers.TryRemove(reqId, out _);
         _orderPlacementRequests.TryRemove(reqId, out _);
+        _secDefOptParamsRequests.TryRemove(reqId, out _);
+        _secDefOptParamsBuffers.TryRemove(reqId, out _);
+        _optionQuoteRequests.TryRemove(reqId, out _);
+        _optionQuoteBuffers.TryRemove(reqId, out _);
     }
 
     public void CleanupPositionRequest()
@@ -228,31 +264,54 @@ internal class IBKRCallbackHandler : DefaultEWrapper
 
     public override void tickPrice(int tickerId, int field, double price, TickAttrib attribs)
     {
-        if (!_quoteBuffers.TryGetValue(tickerId, out var quote))
-            return;
-
-        var decPrice = (decimal)price;
-        switch (field)
+        if (_quoteBuffers.TryGetValue(tickerId, out var quote))
         {
-            case 1: quote.Bid = decPrice; break;    // BID
-            case 2: quote.Ask = decPrice; break;    // ASK
-            case 4: quote.Last = decPrice; break;   // LAST
-            case 6: quote.High = decPrice; break;   // HIGH
-            case 7: quote.Low = decPrice; break;    // LOW
-            case 9: quote.Close = decPrice; break;  // CLOSE
+            var decPrice = (decimal)price;
+            switch (field)
+            {
+                case 1: quote.Bid = decPrice; break;    // BID
+                case 2: quote.Ask = decPrice; break;    // ASK
+                case 4: quote.Last = decPrice; break;   // LAST
+                case 6: quote.High = decPrice; break;   // HIGH
+                case 7: quote.Low = decPrice; break;    // LOW
+                case 9: quote.Close = decPrice; break;  // CLOSE
+            }
+        }
+
+        // Also handle option quote price ticks
+        if (_optionQuoteBuffers.TryGetValue(tickerId, out var optQuote))
+        {
+            var decPrice = (decimal)price;
+            switch (field)
+            {
+                case 1: optQuote.Bid = decPrice; break;
+                case 2: optQuote.Ask = decPrice; break;
+                case 4: optQuote.Last = decPrice; break;
+            }
         }
     }
 
     public override void tickSize(int tickerId, int field, decimal size)
     {
-        if (!_quoteBuffers.TryGetValue(tickerId, out var quote))
-            return;
-
-        switch (field)
+        if (_quoteBuffers.TryGetValue(tickerId, out var quote))
         {
-            case 0: quote.BidSize = size; break;    // BID_SIZE
-            case 3: quote.AskSize = size; break;    // ASK_SIZE
-            case 8: quote.Volume = (long)size; break; // VOLUME
+            switch (field)
+            {
+                case 0: quote.BidSize = size; break;    // BID_SIZE
+                case 3: quote.AskSize = size; break;    // ASK_SIZE
+                case 8: quote.Volume = (long)size; break; // VOLUME
+            }
+        }
+
+        // Also handle option-specific size fields
+        if (_optionQuoteBuffers.TryGetValue(tickerId, out var optQuote))
+        {
+            switch (field)
+            {
+                case 8: optQuote.OptionVolume = (int)size; break;    // VOLUME
+                case 27: optQuote.OpenInterest = (int)size; break;   // OPEN_INTEREST (call)
+                case 28: optQuote.OpenInterest = (int)size; break;   // OPEN_INTEREST (put)
+            }
         }
     }
 
@@ -262,6 +321,74 @@ internal class IBKRCallbackHandler : DefaultEWrapper
             _quoteBuffers.TryGetValue(tickerId, out var quote))
         {
             tcs.TrySetResult(quote);
+        }
+
+        // Also complete option quote snapshots
+        if (_optionQuoteRequests.TryGetValue(tickerId, out var optTcs) &&
+            _optionQuoteBuffers.TryGetValue(tickerId, out var optQuote))
+        {
+            optTcs.TrySetResult(optQuote);
+        }
+    }
+
+    // --- Option Chain Definitions ---
+
+    public override void securityDefinitionOptionParameter(
+        int reqId, string exchange, int underlyingConId, string tradingClass,
+        string multiplier, HashSet<string> expirations, HashSet<double> strikes)
+    {
+        if (!_secDefOptParamsBuffers.TryGetValue(reqId, out var buffer))
+            return;
+
+        _logger.LogDebug("IBKR secDefOptParams: reqId={ReqId} exchange={Exchange} class={Class} " +
+            "{ExpCount} expirations, {StrikeCount} strikes",
+            reqId, exchange, tradingClass, expirations.Count, strikes.Count);
+
+        buffer.Add(new SecurityDefOptParamsData
+        {
+            Exchange = exchange,
+            UnderlyingConId = underlyingConId,
+            TradingClass = tradingClass,
+            Multiplier = multiplier,
+            Expirations = new HashSet<string>(expirations),
+            Strikes = new HashSet<double>(strikes)
+        });
+    }
+
+    public override void securityDefinitionOptionParameterEnd(int reqId)
+    {
+        _logger.LogDebug("IBKR secDefOptParamsEnd: reqId={ReqId}", reqId);
+        if (_secDefOptParamsRequests.TryGetValue(reqId, out var tcs) &&
+            _secDefOptParamsBuffers.TryGetValue(reqId, out var buffer))
+        {
+            tcs.TrySetResult(buffer);
+        }
+    }
+
+    // --- Option Greeks via tickOptionComputation ---
+
+    public override void tickOptionComputation(
+        int tickerId, int field, int tickAttrib,
+        double impliedVolatility, double delta, double optPrice, double pvDividend,
+        double gamma, double vega, double theta, double undPrice)
+    {
+        if (!_optionQuoteBuffers.TryGetValue(tickerId, out var optQuote))
+            return;
+
+        // field 13 = model-based computation (most reliable)
+        // field 10 = bid computation, 11 = ask computation, 12 = last computation
+        if (field == 13)
+        {
+            if (impliedVolatility > 0 && impliedVolatility < double.MaxValue)
+                optQuote.ImpliedVolatility = impliedVolatility;
+            if (Math.Abs(delta) <= 1.0 && delta > -double.MaxValue)
+                optQuote.Delta = delta;
+            if (gamma > 0 && gamma < double.MaxValue)
+                optQuote.Gamma = gamma;
+            if (theta > -double.MaxValue && theta < double.MaxValue)
+                optQuote.Theta = theta;
+            if (vega > 0 && vega < double.MaxValue)
+                optQuote.Vega = vega;
         }
     }
 
@@ -408,6 +535,10 @@ internal class IBKRCallbackHandler : DefaultEWrapper
             histTcs.TrySetException(ex);
         if (_orderPlacementRequests.TryGetValue(reqId, out var orderTcs))
             orderTcs.TrySetException(ex);
+        if (_secDefOptParamsRequests.TryGetValue(reqId, out var secDefTcs))
+            secDefTcs.TrySetException(ex);
+        if (_optionQuoteRequests.TryGetValue(reqId, out var optQuoteTcs))
+            optQuoteTcs.TrySetException(ex);
     }
 
     private void FaultAllPendingRequests(Exception ex)
@@ -416,6 +547,8 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         foreach (var tcs in _quoteRequests.Values) tcs.TrySetException(ex);
         foreach (var tcs in _historicalDataRequests.Values) tcs.TrySetException(ex);
         foreach (var tcs in _orderPlacementRequests.Values) tcs.TrySetException(ex);
+        foreach (var tcs in _secDefOptParamsRequests.Values) tcs.TrySetException(ex);
+        foreach (var tcs in _optionQuoteRequests.Values) tcs.TrySetException(ex);
         lock (_positionLock)
         {
             _positionTcs?.TrySetException(ex);
