@@ -412,6 +412,36 @@ public class IBKRBrokerService : IBrokerService, IDisposable
         }
     }
 
+    private async Task<int> ResolveOptionConIdAsync(
+        string underlying, decimal strike, DateTime expiration, OptionRight right,
+        CancellationToken cancellationToken)
+    {
+        var reqId = _requestManager.GetNextRequestId();
+        var contract = IBKRContractFactory.CreateOption(underlying, strike, expiration, right);
+        var task = _callbackHandler.RegisterContractDetailsRequest(reqId);
+
+        try
+        {
+            _clientSocket!.reqContractDetails(reqId, contract);
+
+            var details = await _requestManager.WithTimeout(
+                task, _config.RequestTimeout, cancellationToken);
+
+            if (details.Count == 0)
+                throw new InvalidOperationException(
+                    $"Could not resolve ConId for {underlying} {strike} {expiration:yyyyMMdd} {right}");
+
+            var conId = details[0].Contract.ConId;
+            _logger.LogDebug("Resolved option ConId: {Underlying} {Strike} {Exp} {Right} → {ConId}",
+                underlying, strike, expiration.ToString("yyyyMMdd"), right, conId);
+            return conId;
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(reqId);
+        }
+    }
+
     public async Task<OptionsAnalytics> GetOptionsAnalyticsAsync(string symbol,
         CancellationToken cancellationToken = default)
     {
@@ -516,6 +546,71 @@ public class IBKRBrokerService : IBrokerService, IDisposable
             order.Status = OrderStatus.Error;
             order.LastUpdated = DateTime.UtcNow;
             _logger.LogError(ex, "Failed to place order {OrderId}", orderId);
+            throw;
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(orderId);
+        }
+    }
+
+    public async Task<Order> PlaceComboOrderAsync(Order order, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+
+        if (order.Legs == null || order.Legs.Count == 0)
+            throw new ArgumentException("Combo order requires at least one leg.", nameof(order));
+
+        // Step 1: Resolve ConId for each option leg
+        var comboLegs = new List<ComboLegInfo>();
+        foreach (var leg in order.Legs)
+        {
+            var conId = await ResolveOptionConIdAsync(
+                leg.UnderlyingSymbol, leg.Strike, leg.Expiration, leg.Right, cancellationToken);
+            comboLegs.Add(new ComboLegInfo
+            {
+                ConId = conId,
+                Action = leg.Action,
+                Ratio = leg.Quantity
+            });
+        }
+
+        // Step 2: Create BAG contract and combo order
+        var underlying = order.Legs[0].UnderlyingSymbol;
+        var contract = IBKRContractFactory.CreateCombo(underlying, comboLegs);
+        var ibOrder = IBKROrderFactory.CreateComboOrder(order);
+
+        var orderId = Interlocked.Increment(ref _nextOrderId);
+        order.BrokerId = orderId.ToString();
+        ibOrder.OrderId = orderId;
+
+        var task = _callbackHandler.RegisterOrderPlacementRequest(orderId);
+
+        try
+        {
+            _logger.LogInformation(
+                "Placing combo order {OrderId}: {Action} {Qty}x {Underlying} ({LegCount} legs) net={NetPrice}",
+                orderId, order.Action, order.Quantity, underlying, order.Legs.Count, order.NetLimitPrice);
+
+            _clientSocket!.placeOrder(orderId, contract, ibOrder);
+
+            var result = await _requestManager.WithTimeout(
+                task,
+                _config.RequestTimeout,
+                cancellationToken);
+
+            order.Status = IBKRMappingExtensions.ToOrderStatus(result.Status);
+            order.SubmittedAt = DateTime.UtcNow;
+            order.LastUpdated = DateTime.UtcNow;
+
+            _logger.LogInformation("Combo order {OrderId} accepted: status={Status}", orderId, result.Status);
+            return order;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            order.Status = OrderStatus.Error;
+            order.LastUpdated = DateTime.UtcNow;
+            _logger.LogError(ex, "Failed to place combo order {OrderId}", orderId);
             throw;
         }
         finally
