@@ -60,7 +60,8 @@ internal class IBKRCallbackHandler : DefaultEWrapper
     public event Action<int, OrderData>? OnOrderStatusChanged;
 
     // Informational error codes that are not real errors
-    private static readonly HashSet<int> InfoErrorCodes = [2104, 2106, 2107, 2108, 2158];
+    // 10167: "Requested market data is not subscribed. Displaying delayed market data."
+    private static readonly HashSet<int> InfoErrorCodes = [2104, 2106, 2107, 2108, 2158, 10167];
 
     public IBKRCallbackHandler(ILogger logger)
     {
