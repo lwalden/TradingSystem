@@ -18,6 +18,10 @@ public class Order
     public DateTime? Expiration { get; set; }
     public OptionRight? Right { get; set; }
     
+    // Multi-leg combo (if applicable)
+    public List<OptionLeg>? Legs { get; set; }
+    public decimal? NetLimitPrice { get; set; } // Net credit/debit for combo orders
+
     // Order details
     public OrderAction Action { get; set; }
     public decimal Quantity { get; set; }

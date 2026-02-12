@@ -31,6 +31,7 @@ public interface IBrokerService
     
     // Orders
     Task<Order> PlaceOrderAsync(Order order, CancellationToken cancellationToken = default);
+    Task<Order> PlaceComboOrderAsync(Order order, CancellationToken cancellationToken = default);
     Task<Order> GetOrderStatusAsync(string orderId, CancellationToken cancellationToken = default);
     Task<List<Order>> GetOpenOrdersAsync(CancellationToken cancellationToken = default);
     Task<bool> CancelOrderAsync(string orderId, CancellationToken cancellationToken = default);
