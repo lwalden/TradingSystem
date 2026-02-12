@@ -294,6 +294,56 @@ public class IBKRCallbackHandlerTests
         Assert.True(eventFired);
     }
 
+    // === Contract Details ===
+
+    [Fact]
+    public async Task ContractDetails_AccumulatesAndCompletes()
+    {
+        var task = _handler.RegisterContractDetailsRequest(50);
+
+        var cd = new ContractDetails
+        {
+            Contract = new Contract { ConId = 756733, Symbol = "SPY", SecType = "STK" }
+        };
+        _handler.contractDetails(50, cd);
+        _handler.contractDetailsEnd(50);
+
+        var result = await task;
+        Assert.Single(result);
+        Assert.Equal(756733, result[0].Contract.ConId);
+        Assert.Equal("SPY", result[0].Contract.Symbol);
+    }
+
+    [Fact]
+    public async Task ContractDetails_MultipleResults()
+    {
+        var task = _handler.RegisterContractDetailsRequest(51);
+
+        _handler.contractDetails(51, new ContractDetails
+        {
+            Contract = new Contract { ConId = 1, Symbol = "TEST" }
+        });
+        _handler.contractDetails(51, new ContractDetails
+        {
+            Contract = new Contract { ConId = 2, Symbol = "TEST" }
+        });
+        _handler.contractDetailsEnd(51);
+
+        var result = await task;
+        Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public async Task Error_FaultsContractDetailsRequest()
+    {
+        var task = _handler.RegisterContractDetailsRequest(52);
+
+        _handler.error(52, 0L, 200, "No security definition found", "");
+
+        var ex = await Assert.ThrowsAsync<IBKRApiException>(() => task);
+        Assert.Equal(200, ex.ErrorCode);
+    }
+
     // === Cleanup ===
 
     [Fact]

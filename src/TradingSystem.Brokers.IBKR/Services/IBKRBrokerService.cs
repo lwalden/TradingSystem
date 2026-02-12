@@ -95,6 +95,11 @@ public class IBKRBrokerService : IBrokerService, IDisposable
 
             _isConnected = true;
             _nextOrderId = _callbackHandler.NextValidOrderId;
+
+            // Request delayed data as fallback when live subscriptions are unavailable
+            // Type 3 = delayed-frozen (delayed when available, frozen last price otherwise)
+            _clientSocket.reqMarketDataType(3);
+
             _logger.LogInformation("Connected to IBKR successfully (nextValidOrderId={OrderId})",
                 _callbackHandler.NextValidOrderId);
             return true;
@@ -179,7 +184,7 @@ public class IBKRBrokerService : IBrokerService, IDisposable
         EnsureConnected();
 
         var tickerId = _requestManager.GetNextRequestId();
-        var contract = IBKRContractFactory.CreateStock(symbol);
+        var contract = IBKRContractFactory.CreateEquity(symbol);
         var task = _callbackHandler.RegisterQuoteRequest(tickerId);
 
         try
@@ -215,18 +220,20 @@ public class IBKRBrokerService : IBrokerService, IDisposable
         EnsureConnected();
 
         var reqId = _requestManager.GetNextRequestId();
-        var contract = IBKRContractFactory.CreateStock(symbol);
+        var contract = IBKRContractFactory.CreateEquity(symbol);
         var task = _callbackHandler.RegisterHistoricalDataRequest(reqId);
 
         var endDateStr = endDate.ToString("yyyyMMdd-HH:mm:ss");
         var duration = IBKRMappingExtensions.ToIBKRDuration(startDate, endDate);
         var barSize = timeframe.ToIBKRBarSize();
+        // Indices don't have TRADES data — use MIDPOINT instead
+        var whatToShow = IBKRContractFactory.IsIndex(symbol) ? "MIDPOINT" : "TRADES";
 
         try
         {
             _clientSocket!.reqHistoricalData(
                 reqId, contract, endDateStr, duration, barSize,
-                "TRADES", 1, 1, false, []);
+                whatToShow, 1, 1, false, []);
 
             var bars = await _requestManager.WithTimeout(
                 task,
@@ -248,13 +255,16 @@ public class IBKRBrokerService : IBrokerService, IDisposable
     {
         EnsureConnected();
 
+        // Step 0: Resolve ConId via reqContractDetails (required for reqSecDefOptParams)
+        var conId = await ResolveConIdAsync(underlying, cancellationToken);
+
         // Step 1: Discover available expirations and strikes
         var reqId = _requestManager.GetNextRequestId();
         var defTask = _callbackHandler.RegisterSecDefOptParamsRequest(reqId);
 
         try
         {
-            _clientSocket!.reqSecDefOptParams(reqId, underlying, "", "STK", 0);
+            _clientSocket!.reqSecDefOptParams(reqId, underlying, "", "STK", conId);
 
             var paramsList = await _requestManager.WithTimeout(
                 defTask, _config.RequestTimeout, cancellationToken);
@@ -373,6 +383,35 @@ public class IBKRBrokerService : IBrokerService, IDisposable
         }
     }
 
+    private async Task<int> ResolveConIdAsync(string symbol, CancellationToken cancellationToken)
+    {
+        var reqId = _requestManager.GetNextRequestId();
+        var contract = IBKRContractFactory.CreateStock(symbol);
+        var task = _callbackHandler.RegisterContractDetailsRequest(reqId);
+
+        try
+        {
+            _clientSocket!.reqContractDetails(reqId, contract);
+
+            var details = await _requestManager.WithTimeout(
+                task, _config.RequestTimeout, cancellationToken);
+
+            if (details.Count == 0)
+            {
+                _logger.LogWarning("No contract details found for {Symbol}, using ConId=0", symbol);
+                return 0;
+            }
+
+            var conId = details[0].Contract.ConId;
+            _logger.LogDebug("Resolved {Symbol} ConId={ConId}", symbol, conId);
+            return conId;
+        }
+        finally
+        {
+            _callbackHandler.CleanupRequest(reqId);
+        }
+    }
+
     public async Task<OptionsAnalytics> GetOptionsAnalyticsAsync(string symbol,
         CancellationToken cancellationToken = default)
     {
@@ -380,7 +419,7 @@ public class IBKRBrokerService : IBrokerService, IDisposable
 
         // Fetch 1 year of historical IV data
         var reqId = _requestManager.GetNextRequestId();
-        var contract = IBKRContractFactory.CreateStock(symbol);
+        var contract = IBKRContractFactory.CreateEquity(symbol);
         var task = _callbackHandler.RegisterHistoricalDataRequest(reqId);
 
         var endDateStr = DateTime.Now.ToString("yyyyMMdd-HH:mm:ss");
