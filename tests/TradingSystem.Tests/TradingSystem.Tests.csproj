@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\TradingSystem.Strategies\TradingSystem.Strategies.csproj" />
     <ProjectReference Include="..\..\src\TradingSystem.Brokers.IBKR\TradingSystem.Brokers.IBKR.csproj" />
     <ProjectReference Include="..\..\src\TradingSystem.Storage\TradingSystem.Storage.csproj" />
+    <ProjectReference Include="..\..\src\TradingSystem.MarketData.Polygon\TradingSystem.MarketData.Polygon.csproj" />
   </ItemGroup>
 
 </Project>
