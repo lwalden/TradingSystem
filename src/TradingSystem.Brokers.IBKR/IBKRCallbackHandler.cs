@@ -46,6 +46,10 @@ internal class IBKRCallbackHandler : DefaultEWrapper
     private readonly ConcurrentDictionary<int, TaskCompletionSource<List<SecurityDefOptParamsData>>> _secDefOptParamsRequests = new();
     private readonly ConcurrentDictionary<int, List<SecurityDefOptParamsData>> _secDefOptParamsBuffers = new();
 
+    // Contract details: keyed by reqId (used to resolve ConId)
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<List<ContractDetails>>> _contractDetailsRequests = new();
+    private readonly ConcurrentDictionary<int, List<ContractDetails>> _contractDetailsBuffers = new();
+
     // Option quotes with Greeks: keyed by tickerId
     private readonly ConcurrentDictionary<int, TaskCompletionSource<OptionQuoteData>> _optionQuoteRequests = new();
     private readonly ConcurrentDictionary<int, OptionQuoteData> _optionQuoteBuffers = new();
@@ -146,6 +150,14 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         return tcs.Task;
     }
 
+    public Task<List<ContractDetails>> RegisterContractDetailsRequest(int reqId)
+    {
+        var tcs = new TaskCompletionSource<List<ContractDetails>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _contractDetailsBuffers[reqId] = new List<ContractDetails>();
+        _contractDetailsRequests[reqId] = tcs;
+        return tcs.Task;
+    }
+
     // === Cleanup ===
 
     public void CleanupRequest(int reqId)
@@ -161,6 +173,8 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         _secDefOptParamsBuffers.TryRemove(reqId, out _);
         _optionQuoteRequests.TryRemove(reqId, out _);
         _optionQuoteBuffers.TryRemove(reqId, out _);
+        _contractDetailsRequests.TryRemove(reqId, out _);
+        _contractDetailsBuffers.TryRemove(reqId, out _);
     }
 
     public void CleanupPositionRequest()
@@ -365,6 +379,26 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         }
     }
 
+    // --- Contract Details (for ConId resolution) ---
+
+    public override void contractDetails(int reqId, ContractDetails contractDetails)
+    {
+        if (_contractDetailsBuffers.TryGetValue(reqId, out var buffer))
+        {
+            buffer.Add(contractDetails);
+        }
+    }
+
+    public override void contractDetailsEnd(int reqId)
+    {
+        _logger.LogDebug("IBKR contractDetailsEnd: reqId={ReqId}", reqId);
+        if (_contractDetailsRequests.TryGetValue(reqId, out var tcs) &&
+            _contractDetailsBuffers.TryGetValue(reqId, out var buffer))
+        {
+            tcs.TrySetResult(buffer);
+        }
+    }
+
     // --- Option Greeks via tickOptionComputation ---
 
     public override void tickOptionComputation(
@@ -539,6 +573,8 @@ internal class IBKRCallbackHandler : DefaultEWrapper
             secDefTcs.TrySetException(ex);
         if (_optionQuoteRequests.TryGetValue(reqId, out var optQuoteTcs))
             optQuoteTcs.TrySetException(ex);
+        if (_contractDetailsRequests.TryGetValue(reqId, out var cdTcs))
+            cdTcs.TrySetException(ex);
     }
 
     private void FaultAllPendingRequests(Exception ex)
@@ -549,6 +585,7 @@ internal class IBKRCallbackHandler : DefaultEWrapper
         foreach (var tcs in _orderPlacementRequests.Values) tcs.TrySetException(ex);
         foreach (var tcs in _secDefOptParamsRequests.Values) tcs.TrySetException(ex);
         foreach (var tcs in _optionQuoteRequests.Values) tcs.TrySetException(ex);
+        foreach (var tcs in _contractDetailsRequests.Values) tcs.TrySetException(ex);
         lock (_positionLock)
         {
             _positionTcs?.TrySetException(ex);
