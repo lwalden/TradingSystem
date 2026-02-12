@@ -2,7 +2,7 @@
 
 > Claude reads this FIRST every session. Run `/archive` when exceeding 100 lines.
 
-**Phase:** 1 - Foundation (Week 1-6 complete, Week 7 next)
+**Phase:** 1 - Foundation (Week 1-6 complete, Week 7 in progress)
 **Last Updated:** 2026-02-12
 
 ## Completed
@@ -11,7 +11,9 @@
 - Week 5: IBKR option chains, IV rank/percentile, technical indicators, market data service (PR #9)
 - Week 6: Options screening service, Polygon.io calendar integration (PR #10, #11)
 - Fix: VIX index contract, option chain ConId, delayed data fallback (PR #12)
-- **305 tests passing** (14 smoke tests all green)
+- Week 7 PR 1: Multi-leg combo orders, OptionsPosition model, JSON repository (PR #13 merged)
+- Fix: IBKR error 10167 delayed data warning treated as informational (pushed to main)
+- **361 tests passing** (14 smoke tests all green)
 
 ## Blockers
 - ~~Polygon.io~~ DONE -- Stocks Starter plan signed up
@@ -19,13 +21,12 @@
 - Claude API Key: Sign up at console.anthropic.com -- needed Week 9
 
 ## Next Session Should
-1. Say "begin Week 7 execution" — plan is approved and ready
-2. Start PR 1: `feature/options-combo-orders` (multi-leg BAG orders + OptionsPosition model + JSON storage)
-3. Plan file: `C:\Users\lwald\.claude\plans\harmonic-crunching-allen.md`
-4. Week 7 = 3 PRs: combo orders → lifecycle rules → OptionsSleeveManager
+1. Start PR 2: `feature/options-position-lifecycle` (lifecycle rules, position grouping, candidate converter, position sizer)
+2. Plan file: `C:\Users\lwald\.claude\plans\harmonic-crunching-allen.md`
+3. Week 7 remaining: PR 2 (lifecycle) → PR 3 (OptionsSleeveManager)
 
 ---
 <!-- Recent sessions: keep last 3 entries. Older entries -> docs/archive/progress-archive.md -->
-- 2026-02-12 Planned Week 7 (Options Sleeve Execution). 3-PR plan approved: combo orders, lifecycle, orchestration. ~170 new tests.
-- 2026-02-12 Smoke tested PRs 9-12 against TWS. Fixed 3 bugs (VIX index, ConId resolution, delayed data). 14/14 smoke tests, 305 unit tests.
-- 2026-02-11 Completed PR #10: Options screening (CSP, spreads, iron condors, calendars), Polygon.io calendar service. 284 tests passing.
+- 2026-02-12 PR #13 merged + smoke tested 14/14. Fixed error 10167. 361 unit tests. Ready for PR 2.
+- 2026-02-12 Completed PR #13: multi-leg BAG orders, OptionsPosition model, JSON repo. 56 new tests.
+- 2026-02-12 Planned Week 7 (Options Sleeve Execution). 3-PR plan approved: combo orders, lifecycle, orchestration.
