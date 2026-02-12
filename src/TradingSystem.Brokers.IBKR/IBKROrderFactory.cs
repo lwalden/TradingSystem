@@ -1,3 +1,4 @@
+using IBApi;
 using TradingSystem.Core.Models;
 using Order = TradingSystem.Core.Models.Order;
 
@@ -62,5 +63,27 @@ internal static class IBKROrderFactory
             TimeInForce.FOK => "FOK",
             _ => throw new ArgumentOutOfRangeException(nameof(tif), tif, "Unknown time in force")
         };
+    }
+
+    /// <summary>
+    /// Creates an IBKR limit order for a combo (BAG) contract.
+    /// The net limit price represents net credit (positive) or net debit (negative).
+    /// </summary>
+    public static IBApi.Order CreateComboOrder(Order domainOrder)
+    {
+        var ibOrder = new IBApi.Order
+        {
+            Action = MapAction(domainOrder.Action),
+            TotalQuantity = domainOrder.Quantity,
+            OrderType = "LMT",
+            LmtPrice = (double)(domainOrder.NetLimitPrice ?? 0m),
+            Tif = MapTimeInForce(domainOrder.TimeInForce),
+            SmartComboRoutingParams = new List<TagValue>
+            {
+                new TagValue("NonGuaranteed", "1")
+            }
+        };
+
+        return ibOrder;
     }
 }
