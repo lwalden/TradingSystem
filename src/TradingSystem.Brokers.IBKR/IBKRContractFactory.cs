@@ -19,6 +19,30 @@ internal static class IBKRContractFactory
         };
     }
 
+    // Known indices that require SecType="IND" instead of "STK"
+    private static readonly HashSet<string> IndexSymbols = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "VIX", "SPX", "NDX", "RUT", "DJX", "OEX"
+    };
+
+    public static bool IsIndex(string symbol) => IndexSymbols.Contains(symbol);
+
+    public static Contract CreateIndex(string symbol)
+    {
+        return new Contract
+        {
+            Symbol = symbol,
+            SecType = "IND",
+            Exchange = "CBOE",
+            Currency = "USD"
+        };
+    }
+
+    public static Contract CreateEquity(string symbol)
+    {
+        return IsIndex(symbol) ? CreateIndex(symbol) : CreateStock(symbol);
+    }
+
     public static Contract CreateOption(string symbol, decimal strike,
         DateTime expiration, OptionRight right)
     {
