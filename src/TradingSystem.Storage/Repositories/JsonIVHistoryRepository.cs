@@ -5,7 +5,7 @@ namespace TradingSystem.Storage.Repositories;
 
 /// <summary>
 /// Persists IV history to JSON files for caching. One file per symbol.
-/// Data is considered stale after the current trading day.
+/// Data is considered stale when the last update is before the current UTC day.
 /// </summary>
 public class JsonIVHistoryRepository
 {
@@ -21,8 +21,18 @@ public class JsonIVHistoryRepository
         var store = GetStore(symbol);
         var history = await store.ReadObjectAsync<IVHistory>(ct);
 
-        // SaveAsync writes UTC timestamps, so staleness should use UTC day boundaries.
-        if (history != null && history.LastUpdated.Date < DateTime.UtcNow.Date)
+        if (history == null)
+            return null;
+
+        var lastUpdatedUtc = history.LastUpdated.Kind switch
+        {
+            DateTimeKind.Utc => history.LastUpdated,
+            DateTimeKind.Local => history.LastUpdated.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(history.LastUpdated, DateTimeKind.Utc)
+        };
+
+        // Stale if last update was before the current UTC calendar day.
+        if (lastUpdatedUtc.Date < DateTime.UtcNow.Date)
             return null;
 
         return history;
