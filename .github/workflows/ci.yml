@@ -22,11 +22,16 @@ jobs:
   # ============================================================================
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Check paths
+        uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
