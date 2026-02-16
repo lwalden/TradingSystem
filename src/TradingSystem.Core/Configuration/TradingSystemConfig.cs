@@ -137,6 +137,8 @@ public class OptionsConfig
     public decimal ProfitTakeMin { get; set; } = 0.50m; // 50%
     public decimal ProfitTakeMax { get; set; } = 0.75m; // 75%
     public decimal StopMultipleCredit { get; set; } = 2.0m; // 2x credit = stop
+    public int RollDTEThreshold { get; set; } = 7;
+    public int CloseDTEThreshold { get; set; } = 3;
 }
 
 public class CalendarConfig
