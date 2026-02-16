@@ -19,7 +19,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{11111111-111
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{22222222-2222-2222-2222-222222222222}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CSharpAPI", "..\..\tws api\source\CSharpClient\client\CSharpAPI.csproj", "{66FD0F15-B7FD-41C2-8228-7BECF4126446}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CSharpAPI", "src\ThirdParty\CSharpAPI\CSharpAPI.csproj", "{66FD0F15-B7FD-41C2-8228-7BECF4126446}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TradingSystem.SmokeTest", "tests\TradingSystem.SmokeTest\TradingSystem.SmokeTest.csproj", "{2FBABEC4-E347-492E-B5E0-F903ADCC889C}"
 EndProject
