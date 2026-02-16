@@ -21,8 +21,8 @@ public class JsonIVHistoryRepository
         var store = GetStore(symbol);
         var history = await store.ReadObjectAsync<IVHistory>(ct);
 
-        // Stale if last updated before today
-        if (history != null && history.LastUpdated.Date < DateTime.Today)
+        // SaveAsync writes UTC timestamps, so staleness should use UTC day boundaries.
+        if (history != null && history.LastUpdated.Date < DateTime.UtcNow.Date)
             return null;
 
         return history;
