@@ -79,7 +79,9 @@ public class DailyOrchestratorTests
         var provider = BuildProviderWithOptionsManager(
             brokerMock,
             riskMock,
-            tacticalConfig: new TacticalConfig { OptionUniverse = new List<string>() });
+            tacticalConfig: new TacticalConfig { OptionUniverse = new List<string>() },
+            out _,
+            out _);
 
         var config = new TradingSystemConfig
         {
@@ -111,7 +113,9 @@ public class DailyOrchestratorTests
             tacticalConfig: new TacticalConfig
             {
                 OptionUniverse = new List<string> { " spy ", "SPY", "QQQ" }
-            });
+            },
+            out _,
+            out _);
 
         var config = new TradingSystemConfig
         {
@@ -125,6 +129,141 @@ public class DailyOrchestratorTests
         await orchestrator.RunPreMarket(timer: null!, CancellationToken.None);
 
         riskMock.Verify(r => r.IsTradingHaltedAsync(It.IsAny<CancellationToken>()), Times.Once);
+        brokerMock.Verify(b => b.DisconnectAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunPreMarket_ExecutableOptionsPath_ExecutesCandidateAndNormalizesSymbols()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        brokerMock
+            .Setup(b => b.ConnectAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        brokerMock
+            .Setup(b => b.DisconnectAsync())
+            .Returns(Task.CompletedTask);
+        brokerMock
+            .Setup(b => b.GetAccountAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Account
+            {
+                NetLiquidationValue = 100_000m,
+                AvailableFunds = 100_000m,
+                BuyingPower = 100_000m
+            });
+        brokerMock
+            .Setup(b => b.GetPositionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<Position>());
+        brokerMock
+            .Setup(b => b.GetOptionChainAsync("SPY", null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateBullPutSpreadChain("SPY"));
+        brokerMock
+            .Setup(b => b.PlaceComboOrderAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Order
+            {
+                Id = "order-1",
+                BrokerId = "101",
+                Status = OrderStatus.Submitted
+            });
+
+        var riskMock = CreateRiskManagerMock(isTradingHalted: false);
+        var provider = BuildProviderWithOptionsManager(
+            brokerMock,
+            riskMock,
+            tacticalConfig: new TacticalConfig
+            {
+                OptionUniverse = new List<string> { " spy ", "SPY" }
+            },
+            out var marketDataMock,
+            out var calendarMock);
+
+        marketDataMock
+            .Setup(m => m.GetMarketRegimeAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MarketRegime
+            {
+                Regime = RegimeType.RiskOn,
+                Timestamp = DateTime.UtcNow
+            });
+        marketDataMock
+            .Setup(m => m.GetOptionsAnalyticsAsync("SPY", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OptionsAnalytics
+            {
+                Symbol = "SPY",
+                IVRank = 60m,
+                IVPercentile = 70m,
+                CurrentIV = 0.25m,
+                Timestamp = DateTime.UtcNow
+            });
+        marketDataMock
+            .Setup(m => m.GetQuoteAsync("SPY", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Quote
+            {
+                Symbol = "SPY",
+                Last = 500m,
+                Bid = 499.5m,
+                Ask = 500.5m,
+                Timestamp = DateTime.UtcNow
+            });
+
+        List<string>? symbolsSeenByCalendar = null;
+        calendarMock
+            .Setup(c => c.GetSymbolsInNoTradeWindowAsync(
+                It.IsAny<IEnumerable<string>>(),
+                It.IsAny<DateTime>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<string>, DateTime, CancellationToken>((symbols, _, _) =>
+            {
+                symbolsSeenByCalendar = symbols.ToList();
+            })
+            .ReturnsAsync(new List<string>());
+
+        var config = new TradingSystemConfig
+        {
+            Tactical = new TacticalConfig
+            {
+                OptionUniverse = new List<string> { " spy ", "SPY" }
+            }
+        };
+        var orchestrator = CreateOrchestrator(config, provider);
+
+        await orchestrator.RunPreMarket(timer: null!, CancellationToken.None);
+
+        Assert.NotNull(symbolsSeenByCalendar);
+        Assert.Single(symbolsSeenByCalendar!);
+        Assert.Equal("SPY", symbolsSeenByCalendar![0]);
+        riskMock.Verify(r => r.ValidateSignalAsync(It.IsAny<Signal>(), It.IsAny<Account>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        brokerMock.Verify(b => b.PlaceComboOrderAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        brokerMock.Verify(b => b.DisconnectAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunPreMarket_WhenOptionsPathThrows_DisconnectsAndRethrows()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        brokerMock
+            .Setup(b => b.ConnectAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        brokerMock
+            .Setup(b => b.DisconnectAsync())
+            .Returns(Task.CompletedTask);
+        brokerMock
+            .Setup(b => b.GetAccountAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("boom"));
+
+        var riskMock = CreateRiskManagerMock(isTradingHalted: false);
+        var provider = BuildProviderWithOptionsManager(
+            brokerMock,
+            riskMock,
+            tacticalConfig: new TacticalConfig { OptionUniverse = new List<string> { "SPY" } },
+            out _,
+            out _);
+
+        var config = new TradingSystemConfig
+        {
+            Tactical = new TacticalConfig { OptionUniverse = new List<string> { "SPY" } }
+        };
+        var orchestrator = CreateOrchestrator(config, provider);
+
+        await Assert.ThrowsAsync<Exception>(() => orchestrator.RunPreMarket(timer: null!, CancellationToken.None));
         brokerMock.Verify(b => b.DisconnectAsync(), Times.Once);
     }
 
@@ -154,8 +293,13 @@ public class DailyOrchestratorTests
     private static IServiceProvider BuildProviderWithOptionsManager(
         Mock<IBrokerService> brokerMock,
         Mock<IRiskManager> riskMock,
-        TacticalConfig tacticalConfig)
+        TacticalConfig tacticalConfig,
+        out Mock<IMarketDataService> marketDataMock,
+        out Mock<ICalendarService> calendarMock)
     {
+        marketDataMock = new Mock<IMarketDataService>();
+        calendarMock = new Mock<ICalendarService>();
+
         var optionsRepo = new InMemoryOptionsPositionRepository();
         var signalRepo = new Mock<ISignalRepository>();
         var orderRepo = new Mock<IOrderRepository>();
@@ -171,9 +315,9 @@ public class DailyOrchestratorTests
             .ReturnsAsync((Order order, CancellationToken _) => order);
 
         var screeningService = new OptionsScreeningService(
-            Mock.Of<IMarketDataService>(),
+            marketDataMock.Object,
             brokerMock.Object,
-            Mock.Of<ICalendarService>(),
+            calendarMock.Object,
             Microsoft.Extensions.Options.Options.Create(tacticalConfig),
             NullLogger<OptionsScreeningService>.Instance);
 
@@ -205,6 +349,48 @@ public class DailyOrchestratorTests
             .AddSingleton(brokerMock.Object)
             .AddSingleton(manager)
             .BuildServiceProvider();
+    }
+
+    private static List<OptionContract> CreateBullPutSpreadChain(string symbol)
+    {
+        var expiration = DateTime.Today.AddDays(30);
+        return new List<OptionContract>
+        {
+            new()
+            {
+                Symbol = $"{symbol}_PUT_500",
+                UnderlyingSymbol = symbol,
+                Strike = 500m,
+                Expiration = expiration,
+                Right = OptionRight.Put,
+                Delta = -0.20m,
+                Bid = 2.02m,
+                Ask = 2.06m,
+                Last = 2.04m,
+                OpenInterest = 500,
+                Volume = 100,
+                ImpliedVolatility = 0.30m,
+                Theta = -0.05m,
+                Timestamp = DateTime.UtcNow
+            },
+            new()
+            {
+                Symbol = $"{symbol}_PUT_495",
+                UnderlyingSymbol = symbol,
+                Strike = 495m,
+                Expiration = expiration,
+                Right = OptionRight.Put,
+                Delta = -0.10m,
+                Bid = 1.02m,
+                Ask = 1.04m,
+                Last = 1.03m,
+                OpenInterest = 500,
+                Volume = 100,
+                ImpliedVolatility = 0.30m,
+                Theta = -0.04m,
+                Timestamp = DateTime.UtcNow
+            }
+        };
     }
 
     private sealed class InMemoryOptionsPositionRepository : IOptionsPositionRepository
