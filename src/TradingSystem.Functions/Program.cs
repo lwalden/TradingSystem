@@ -53,6 +53,7 @@ var host = new HostBuilder()
         // Core services
         services.AddSingleton<IBrokerService, IBKRBrokerService>();
         services.AddSingleton<IMarketDataService, CachingMarketDataService>();
+        services.AddSingleton<IRiskManager, RiskManager>();
         services.AddSingleton<IExecutionService, SimpleExecutionService>();
         services.AddSingleton<OptionsExecutionService>();
 
