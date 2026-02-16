@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-**Vision:** Build a fully automated trading system that manages a two-sleeve portfolio (70% high-yield income / 30% options) via Interactive Brokers. The system uses rule-based strategies for all execution and leverages Claude AI cost-effectively for daily market regime detection and quarterly income quality audits. The goal is consistent, risk-managed returns with minimal daily human intervention.
+**Vision:** Build a fully automated trading platform that can run both sleeves (Income + Options) in paper and live modes via Interactive Brokers. The system uses rule-based strategies for execution and leverages Claude AI cost-effectively for market regime detection, quality audits, and owner-facing recommendations. The goal is consistent, risk-managed returns with minimal daily human intervention and clear human control at key capital-allocation decisions.
 
 **Key Differentiators:**
 1. **Custom strategy implementation** -- Executes YOUR specific two-sleeve strategy; no off-the-shelf product does this combination
@@ -19,12 +19,23 @@
 4. **Cost-effective AI** -- Claude only where it beats algorithmic rules (regime detection, quality audits); everything else is deterministic
 
 **Success Criteria (6 months live):**
+- **Sleeve Validation:** Each sleeve has explicit paper-trading pass criteria; only passed sleeves are eligible for live activation
 - **Returns:** Positive absolute returns OR outperform S&P 500
 - **Income:** Consistent monthly income from dividends + options premiums, targeting 8-12% annualized yield
-- **Risk:** Max drawdown ≤ 15%
+- **Risk:** Max drawdown <= 15%
 - **Operational:** < 30 min/day of human oversight
+- **Recommendation Quality:** Reports provide clear sleeve allocation/rebalance recommendations with rationale and confidence
 
-**Cost Constraint:** Total monthly cost < $100 (Azure + Polygon.io + Claude API)
+**Cost Constraint:** Platform operating cost target < $100/month (Azure + Polygon.io + Claude API). Brokerage commissions/fees are tracked separately and forecasted in reports.
+
+**Operating Model (Owner Decisions):**
+1. Run both sleeves during paper validation with a baseline of $100,000 available for validation.
+2. Go live only with sleeves that pass validation expectations.
+3. Live activation can be staged (one sleeve first, second sleeve later).
+4. Human decides final live allocation split; total deployable capital is expected to be in the $10,000-$400,000 range at decision time.
+5. Minimum live capital per active sleeve account: $100,000.
+6. System provides allocation and rebalance recommendations; human executes rebalancing manually.
+7. Human may add/withdraw capital over time. For options sleeve, only free cash (not collateral reserved against open options positions) is withdrawable.
 
 ---
 
@@ -56,9 +67,10 @@
 **User Needs:**
 1. **Consistent income generation** -- Automated dividend reinvestment and quality monitoring
 2. **Options premium capture** -- Systematic multi-leg options strategies driven by IV and market regime
-3. **Time efficiency** -- Minimal daily intervention once system is stable
-4. **Risk protection** -- Automatic stops and position limits to prevent large losses
-5. **Transparency** -- Clear audit trail of all decisions and trades
+3. **Decision support** -- Sleeve activation/allocation/rebalance recommendations with rationale
+4. **Time efficiency** -- Minimal daily intervention once system is stable
+5. **Risk protection** -- Automatic stops and position limits to prevent large losses
+6. **Transparency** -- Clear audit trail of all decisions and trades
 
 ### 1.3 Core Feature Set
 
@@ -73,8 +85,8 @@
 - [ ] Options chains retrieved for any symbol
 - [ ] Historical bars match TWS chart data
 
-#### Feature: Income Sleeve Manager (70%)
-**Description:** High-yield income portfolio -- CEFs, BDCs, preferreds, high-yield ETFs with quality filters. Monthly reinvestment, drift tracking, quality gates.
+#### Feature: Income Sleeve Manager (Dynamic Allocation)
+**Description:** High-yield income portfolio -- CEFs, BDCs, preferreds, high-yield ETFs with quality filters. Monthly reinvestment, drift tracking, quality gates. Sleeve may be active in paper or live depending on validation outcomes.
 **Acceptance Criteria:**
 - [ ] Allocation drift calculated accurately per category
 - [ ] Buy list generated prioritizing most underweight categories
@@ -82,8 +94,8 @@
 - [ ] Limit orders placed via IBKR API
 - [ ] Full monthly reinvest cycle completes in paper trading
 
-#### Feature: Options Sleeve Manager (30%)
-**Description:** Scan all optionable stocks for IV/time decay opportunities. Execute credit spreads (verticals), iron condors/butterflies, CSPs, and calendar/diagonal spreads. Strategy selection driven by market regime.
+#### Feature: Options Sleeve Manager (Dynamic Allocation)
+**Description:** Scan all optionable stocks for IV/time decay opportunities. Execute credit spreads (verticals), iron condors/butterflies, CSPs, and calendar/diagonal spreads. Strategy selection driven by market regime. Sleeve may be active in paper or live depending on validation outcomes.
 **Acceptance Criteria:**
 - [ ] Options chains scanned with IV rank/percentile calculated
 - [ ] Credit spread candidates identified meeting all entry criteria
@@ -101,6 +113,15 @@
 - [ ] Weekly stop (4% loss) halts all new trades until manual re-enable
 - [ ] Position caps enforced (7.5% single equity, 3% single spread)
 - [ ] Earnings no-trade window enforced via Polygon.io calendar
+
+#### Feature: Sleeve Allocation & Rebalance Recommendation Engine (Human-Executed)
+**Description:** Produces owner-facing recommendations for sleeve activation, capital allocation, and rebalance actions. The system recommends; the human executes capital transfers/rebalances.
+**Acceptance Criteria:**
+- [ ] Weekly sleeve scorecards summarize paper/live readiness by sleeve
+- [ ] Allocation recommendations respect active-sleeve minimum capital constraints
+- [ ] Rebalance recommendations are included in reports with rationale + confidence
+- [ ] No automatic rebalance/capital-transfer execution occurs without explicit human action
+- [ ] Options sleeve withdrawal recommendations exclude collateral-reserved cash
 
 #### Feature: Claude AI -- Market Regime Detection
 **Description:** Daily API call to determine market regime (trending up, trending down, range-bound, high volatility) which dictates which options strategies the system deploys.
@@ -122,11 +143,12 @@
 1. **Quarterly Income Quality Audits** -- Claude web search for NII, FFO, distribution coverage; red/yellow/green ratings; reduction signals
 2. **Performance Analytics** -- Metrics tracking, benchmark comparison, strategy attribution
 3. **Strategy Tuning** -- Parameter optimization based on paper trading results
+4. **Recommendation Engine Tuning** -- Improve allocation/rebalance recommendation quality and confidence calibration
 
 **Phase 3 -- Validation & Go-Live:**
 1. **12+ weeks paper trading validation** -- Full system running autonomously
-2. **Performance assessment** -- Formal go/no-go against success criteria
-3. **Live transition** -- Pilot with reduced capital, then full deployment
+2. **Performance assessment** -- Sleeve-level go/no-go against success criteria
+3. **Live transition** -- Human-selected staged activation (one or both sleeves) with explicit allocation decisions
 
 **Out of Scope:**
 - Equity swing trades (potential future third sleeve)
@@ -154,7 +176,7 @@
         ▼                           ▼
 ┌───────────────────┐       ┌───────────────────┐
 │   Income Sleeve   │       │  Options Sleeve   │
-│   Manager (70%)   │       │   Manager (30%)   │
+│ Manager (Dynamic) │       │ Manager (Dynamic) │
 │                   │       │                   │
 │ - Monthly reinvest│       │ - IV/Greeks scan  │
 │ - Drift tracking  │       │ - Credit spreads  │
@@ -363,9 +385,13 @@ Azure Functions endpoints (HTTP triggers for manual operations, Timer triggers f
 
 The following actions **REQUIRE explicit human approval:**
 1. Switching from SANDBOX to LIVE mode
-2. Changing any risk cap or sleeve allocation
-3. Trading within no-trade window (earnings) for special reasons
-4. Rolling covered calls across ex-dividend dates
+2. Activating/deactivating sleeves for live trading
+3. Selecting live capital allocation split between sleeves
+4. Changing any risk cap or sleeve allocation policy
+5. Executing rebalances or capital transfers between sleeve accounts
+6. Approving withdrawals/additions that impact sleeve capital constraints
+7. Trading within no-trade window (earnings) for special reasons
+8. Rolling covered calls across ex-dividend dates
 
 **Emergency Stop Behavior (Automatic):**
 - Daily stop (2% loss): Halt ALL new trades for rest of day, Discord alert
@@ -410,7 +436,7 @@ The following actions **REQUIRE explicit human approval:**
 | 5-6 | Options Sleeve -- Scanning | IV rank/percentile calc, Greeks analysis, options screening, Polygon.io |
 | 7-8 | Options Sleeve -- Execution | Credit spreads, iron condors, CSPs, calendars, multi-leg orders, roll signals |
 | 9 | Risk Engine & AI Regime | Risk validation, stops, emergency halt, Claude regime detection |
-| 10 | Reporting & Integration | Discord reports, alerts, daily orchestrator, end-to-end paper test |
+| 10 | Reporting & Integration | Discord reports, alerts, daily orchestrator, end-to-end paper test, initial allocation/rebalance recommendations |
 
 ### Phase 2: AI Audits & Optimization (Weeks 11-14)
 **Duration:** 4 weeks
@@ -418,7 +444,7 @@ The following actions **REQUIRE explicit human approval:**
 | Week | Focus | Deliverables |
 |------|-------|--------------|
 | 11-12 | Income Quality Audits | Quarterly audit with Claude web search, quality ratings, reduction signals |
-| 13-14 | Performance & Tuning | Metrics tracking, benchmark comparison, parameter tuning |
+| 13-14 | Performance & Tuning | Metrics tracking, benchmark comparison, parameter tuning, recommendation confidence tuning |
 
 ### Phase 3: Validation & Go-Live (Weeks 15-28+)
 **Duration:** 14+ weeks
@@ -426,7 +452,7 @@ The following actions **REQUIRE explicit human approval:**
 | Week | Focus | Deliverables |
 |------|-------|--------------|
 | 15-26 | Paper Trading | 12+ weeks autonomous operation, performance analysis |
-| 27-28 | Live Transition | Fund account, configure live, pilot with reduced capital |
+| 27-28 | Live Transition | Human-selected staged sleeve activation, finalize capital split, pilot live deployment |
 
 ---
 
@@ -439,10 +465,17 @@ The following actions **REQUIRE explicit human approval:**
 | Discord Setup | Create server/channel, create webhook | Before Week 10 |
 | Polygon.io | Sign up for Stocks Starter ($29/month) | Before Week 5 |
 | Azure Resources | Create Cosmos DB, Functions, Key Vault (or use Bicep) | Before Week 3 |
+| Paper Validation Capital | Provide baseline $100,000 paper capital for validation phase | Before Week 15 |
+| Live Sleeve Activation | Select which sleeve(s) go live after validation | Before Week 27 |
+| Live Capital Split | Choose final live allocation split and account mapping (minimum $100,000 per active sleeve account) | Before Week 27 |
+| Rebalance Execution | Manually execute system-proposed rebalance/capital transfer actions | Ongoing |
+| Withdrawal/Additions | Decide and execute cash additions/withdrawals by sleeve policy | Ongoing |
 
 ---
 
 ## Part 7: Cost Estimates
+
+**Platform Costs (Target Ceiling Applies Here):**
 
 | Service | Estimated Monthly Cost | Purpose |
 |---------|----------------------|---------|
@@ -451,33 +484,61 @@ The following actions **REQUIRE explicit human approval:**
 | Key Vault | ~$1 | Secret management |
 | Application Insights | ~$1-5 | Monitoring |
 | Storage Account | ~$1 | Function storage |
-| Claude API | ~$2-10 | Regime detection + quarterly audits |
+| Claude API | ~$2-10 | Regime detection + quarterly audits + recommendation/report augmentation |
 | Polygon.io | $29 | Earnings calendar |
 | Discord | Free | Notifications |
-| IBKR | $0 (waived with activity) | Brokerage |
-| **Total** | **~$40-65/month** | **Under $100 ceiling** |
+| **Platform Total** | **~$40-65/month** | **Target: under $100** |
+
+**Brokerage Commissions & Fees (Tracked Separately):**
+
+Conservative planning model for options activity: assume ~$1.00 all-in per option contract-side.
+
+| Monthly Option Contract-Sides | Estimated Commission/Fee Cost |
+|-----------------------------:|------------------------------:|
+| 100 | ~$100 |
+| 250 | ~$250 |
+| 500 | ~$500 |
+| 1,000 | ~$1,000 |
+
+**All-In Monthly Range (Platform + Brokerage):**
+- Light options activity (100 sides): ~$140-165
+- Moderate options activity (250 sides): ~$290-315
+- Active options activity (500 sides): ~$540-565
 
 ---
 
-## Unknowns & TODOs
+## Phase-Gated Clarification Prompts (Non-Blocking Until Gate)
 
-<!-- TODO: Intraday vs daily execution for options management
-     WHEN: After Phase 1 paper trading results
-     BLOCKER: Options roll/close timing
-     OPTIONS: Daily batch only, intraday monitoring for near-expiry, hybrid
--->
+Unknowns should not block ongoing development. Instead, Claude must prompt the owner at defined gates before dependent automation proceeds.
 
-<!-- TODO: Backtesting engine scope
-     WHEN: Post-live Phase 3+ planning
-     BLOCKER: Strategy optimization approach
-     OPTIONS: Simple replay, realistic fills with slippage, full event-driven
--->
+### Gate A: Before Options Lifecycle Finalization (Pre-Week 7-8 completion)
+- Roll timing preference: daily batch only, near-expiry intraday checks, or hybrid
+- Assignment handling and acceptable tolerance
+- Final profit-taking/stop rules per options strategy
 
-<!-- TODO: Swing trade third sleeve
-     WHEN: After options sleeve proven in live trading
-     BLOCKER: None (independent addition)
-     OPTIONS: Momentum/breakout, mean reversion, multi-strategy
--->
+### Gate B: Before Recommendation Engine Completion (Pre-Week 10 completion)
+- Report format and cadence preferences
+- Required confidence threshold for recommendations
+- Required rationale detail for allocation/rebalance suggestions
+
+### Gate C: Before Paper Validation Launch (Pre-Week 15)
+- Final sleeve-level pass/fail criteria for validation
+- Required sample size and acceptable drawdown band by sleeve
+- Conditions for activating one sleeve while the other remains paper-only
+
+### Gate D: Before Live Transition (Pre-Week 27)
+- Final active sleeve set (one or both)
+- Final live capital split and account mapping
+- Rebalance authority boundaries and approval workflow
+
+### Gate E: Post-Live Periodic Tuning (Ongoing)
+- Parameter change approvals by sleeve
+- Withdrawal/addition policy adjustments
+- Pause/reactivate rules for underperforming sleeves
+
+### Deferred Strategic Items
+- Backtesting engine scope (post-live)
+- Swing-trade third sleeve (after options sleeve live maturity)
 
 ---
 
@@ -536,4 +597,4 @@ The following actions **REQUIRE explicit human approval:**
 
 ---
 
-*Version: 2.0 | Last Updated: 2026-02-09*
+*Version: 2.1 | Last Updated: 2026-02-16*
