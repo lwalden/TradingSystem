@@ -117,6 +117,8 @@ public class OptionsConfig
     public int MinOpenInterest { get; set; } = 250;
     public decimal MaxSpreadDollars { get; set; } = 0.10m;
     public decimal MaxSpreadPercent { get; set; } = 0.025m; // 2.5%
+    public int MaxOpenPositions { get; set; } = 10;
+    public int MaxPositionsPerUnderlying { get; set; } = 2;
     
     // Short premium requirements
     public decimal MinIVPercentile { get; set; } = 50m;
@@ -137,6 +139,8 @@ public class OptionsConfig
     public decimal ProfitTakeMin { get; set; } = 0.50m; // 50%
     public decimal ProfitTakeMax { get; set; } = 0.75m; // 75%
     public decimal StopMultipleCredit { get; set; } = 2.0m; // 2x credit = stop
+    public int RollDTEThreshold { get; set; } = 7;
+    public int CloseDTEThreshold { get; set; } = 3;
 }
 
 public class CalendarConfig
