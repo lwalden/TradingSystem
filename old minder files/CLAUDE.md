@@ -192,7 +192,6 @@ CI/CD:          GitHub Actions (future)
 ├── CLAUDE.md                         # This file
 ├── PROGRESS.md                       # Session continuity tracking
 ├── DECISIONS.md                      # Architectural decisions
-├── README.md
 └── TradingSystem.sln
 ```
 
