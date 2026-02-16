@@ -32,7 +32,7 @@
 1. Run both sleeves during paper validation with a baseline of $100,000 available for validation.
 2. Go live only with sleeves that pass validation expectations.
 3. Live activation can be staged (one sleeve first, second sleeve later).
-4. Human decides final live allocation split; total deployable capital is expected to be in the $10,000-$400,000 range at decision time.
+4. Human decides final live allocation split; total deployable capital is expected to be in the $100,000-$400,000 range at decision time.
 5. Minimum live capital per active sleeve account: $100,000.
 6. System provides allocation and rebalance recommendations; human executes rebalancing manually.
 7. Human may add/withdraw capital over time. For options sleeve, only free cash (not collateral reserved against open options positions) is withdrawable.
