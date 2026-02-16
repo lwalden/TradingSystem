@@ -3,11 +3,20 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using TradingSystem.Brokers.IBKR;
+using TradingSystem.Brokers.IBKR.Services;
 using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
+using TradingSystem.Core.Services;
+using TradingSystem.MarketData.Polygon;
+using TradingSystem.MarketData.Polygon.Services;
+using TradingSystem.Storage;
+using TradingSystem.Storage.Repositories;
+using TradingSystem.Strategies.Options;
+using TradingSystem.Strategies.Services;
 
 var host = new HostBuilder()
-    .ConfigureFunctionsWebApplication()
+    .ConfigureFunctionsWorkerDefaults()
     .ConfigureAppConfiguration((context, config) =>
     {
         config.AddJsonFile("local.settings.json", optional: true, reloadOnChange: true);
@@ -28,28 +37,41 @@ var host = new HostBuilder()
         // Configuration
         services.Configure<TradingSystemConfig>(
             context.Configuration.GetSection("TradingSystem"));
+        services.Configure<TacticalConfig>(
+            context.Configuration.GetSection("TradingSystem:Tactical"));
+        services.Configure<IBKRConfig>(
+            context.Configuration.GetSection("IBKR"));
+        services.Configure<LocalStorageConfig>(
+            context.Configuration.GetSection("LocalStorage"));
+        services.Configure<PolygonConfig>(
+            context.Configuration.GetSection("Polygon"));
         
         // Application Insights
         services.AddApplicationInsightsTelemetryWorkerService();
         services.ConfigureFunctionsApplicationInsights();
         
         // Core services
-        // TODO: Register implementations as we build them
-        // services.AddSingleton<IBrokerService, IBKRBrokerService>();
-        // services.AddSingleton<IMarketDataService, MarketDataService>();
-        // services.AddSingleton<IRiskManager, RiskManager>();
-        // services.AddSingleton<IExecutionService, ExecutionService>();
-        
-        // Repositories (Cosmos DB)
-        // TODO: Register repository implementations
-        // services.AddSingleton<ITradeRepository, CosmosTradeRepository>();
-        // services.AddSingleton<ISignalRepository, CosmosSignalRepository>();
-        // services.AddSingleton<IOrderRepository, CosmosOrderRepository>();
-        
-        // Strategies
-        // TODO: Register strategy implementations
-        // services.AddSingleton<IStrategy, IncomeMonthlyReinvestStrategy>();
-        // services.AddSingleton<IStrategy, MomentumBreakoutStrategy>();
+        services.AddSingleton<IBrokerService, IBKRBrokerService>();
+        services.AddSingleton<IMarketDataService, CachingMarketDataService>();
+        services.AddSingleton<IExecutionService, SimpleExecutionService>();
+        services.AddSingleton<OptionsExecutionService>();
+
+        // Repositories (local JSON storage for now)
+        services.AddSingleton<IOrderRepository, JsonOrderRepository>();
+        services.AddSingleton<ISignalRepository, JsonSignalRepository>();
+        services.AddSingleton<IOptionsPositionRepository, JsonOptionsPositionRepository>();
+
+        // External data clients/services
+        services.AddHttpClient<PolygonApiClient>();
+        services.AddSingleton<ICalendarService, PolygonCalendarService>();
+
+        // Options strategy services
+        services.AddSingleton<OptionsScreeningService>();
+        services.AddSingleton<OptionsLifecycleRules>();
+        services.AddSingleton<OptionsPositionGrouper>();
+        services.AddSingleton<OptionsCandidateConverter>();
+        services.AddSingleton<OptionsPositionSizer>();
+        services.AddSingleton<OptionsSleeveManager>();
         
         // AI Service
         // TODO: Register Claude service

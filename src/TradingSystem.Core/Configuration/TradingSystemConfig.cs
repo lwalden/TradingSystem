@@ -91,6 +91,9 @@ public class IncomeQualityGates
 
 public class TacticalConfig
 {
+    // Default watchlist for daily options scanning/orchestration.
+    public List<string> OptionUniverse { get; set; } = new() { "SPY", "QQQ", "IWM" };
+
     // Equity candidate filters
     public decimal MinADV { get; set; } = 10_000_000m; // $10M
     public decimal MinPrice { get; set; } = 5m;
