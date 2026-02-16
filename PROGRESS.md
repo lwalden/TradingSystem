@@ -28,8 +28,9 @@
 - Week 9 PR 2: stop-trigger alerts wired via `IRiskAlertService` + Discord webhook implementation, with transition-only alerting to prevent duplicate spam
 - Week 9 PR 2: Functions DI now registers `ISnapshotRepository` and risk alert service; local settings include Discord config placeholders
 - Week 9 PR 2: expanded `RiskManagerTests` with snapshot-backed drawdown and alert-transition coverage (11 risk tests total)
+- Week 9 PR 3: expanded pre-market orchestration smoke coverage with executable options-path test and disconnect-on-exception test in `DailyOrchestratorTests`
 - Dependency maintenance: upgraded `Azure.Identity` in Functions from 1.10.4 to 1.17.1; vulnerability scan now clean
-- **416 tests passing**
+- **418 tests passing**
 
 ## Blockers
 - ~~Polygon.io~~ DONE -- Stocks Starter plan signed up
@@ -37,12 +38,12 @@
 - Claude API Key: Sign up at console.anthropic.com -- needed Week 9
 
 ## Next Session Should
-1. Expand smoke coverage for the pre-market options orchestration path (live IBKR smoke remains optional/manual)
-2. Begin Claude regime service integration; prompt for Claude API key at gate before dependent automation
-3. Validate Discord webhook configuration in runtime environment so stop alerts can deliver externally
+1. Begin Claude regime service integration; prompt for Claude API key at gate before dependent automation
+2. Validate Discord webhook configuration in runtime environment so stop alerts can deliver externally
+3. Add low-friction smoke scenario in `TradingSystem.SmokeTest` for orchestrator path that does not require live IBKR session
 
 ---
 <!-- Recent sessions: keep last 3 entries. Older entries -> docs/archive/progress-archive.md -->
+- 2026-02-16 Expanded orchestration smoke coverage: added two `DailyOrchestrator` tests for executable options path + disconnect/rethrow behavior. 418 tests passing.
 - 2026-02-16 Completed Week 9 PR2: snapshot-backed risk metrics + drawdown tracking + transition-based Discord stop alerts wired through DI. Added 3 new risk tests. Also upgraded `Azure.Identity` to 1.17.1 to clear advisory warnings. 416 tests passing.
 - 2026-02-16 CI fix: replaced external `..\..\tws api\...` project references with repo-local `src/ThirdParty/CSharpAPI` to resolve GitHub Actions restore failure.
-- 2026-02-16 Completed Week 9 PR1: concrete `RiskManager` implemented + wired into Functions DI, 8 new risk-manager tests added, options manager now fully resolvable in runtime DI. Also synchronized capital-envelope typo fix across strategy/decision/review docs. 413 tests passing.
