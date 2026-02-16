@@ -45,6 +45,8 @@ var host = new HostBuilder()
             context.Configuration.GetSection("LocalStorage"));
         services.Configure<PolygonConfig>(
             context.Configuration.GetSection("Polygon"));
+        services.Configure<DiscordConfig>(
+            context.Configuration.GetSection("Discord"));
         
         // Application Insights
         services.AddApplicationInsightsTelemetryWorkerService();
@@ -53,6 +55,8 @@ var host = new HostBuilder()
         // Core services
         services.AddSingleton<IBrokerService, IBKRBrokerService>();
         services.AddSingleton<IMarketDataService, CachingMarketDataService>();
+        services.AddHttpClient("DiscordRiskAlerts");
+        services.AddSingleton<IRiskAlertService, TradingSystem.Functions.DiscordRiskAlertService>();
         services.AddSingleton<IRiskManager, RiskManager>();
         services.AddSingleton<IExecutionService, SimpleExecutionService>();
         services.AddSingleton<OptionsExecutionService>();
@@ -60,6 +64,7 @@ var host = new HostBuilder()
         // Repositories (local JSON storage for now)
         services.AddSingleton<IOrderRepository, JsonOrderRepository>();
         services.AddSingleton<ISignalRepository, JsonSignalRepository>();
+        services.AddSingleton<ISnapshotRepository, JsonSnapshotRepository>();
         services.AddSingleton<IOptionsPositionRepository, JsonOptionsPositionRepository>();
 
         // External data clients/services
