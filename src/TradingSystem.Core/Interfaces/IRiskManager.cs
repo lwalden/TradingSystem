@@ -84,10 +84,12 @@ public class RiskMetrics
     public decimal DailyPnLPercent { get; set; }
     public decimal WeeklyPnL { get; set; }
     public decimal WeeklyPnLPercent { get; set; }
+    public decimal HighWaterMark { get; set; }
     public decimal MaxDrawdown { get; set; }
     public decimal CurrentDrawdown { get; set; }
     public bool DailyStopTriggered { get; set; }
     public bool WeeklyStopTriggered { get; set; }
+    public bool DrawdownHaltTriggered { get; set; }
     public int OpenPositionCount { get; set; }
     public decimal GrossExposure { get; set; }
     public decimal NetExposure { get; set; }
