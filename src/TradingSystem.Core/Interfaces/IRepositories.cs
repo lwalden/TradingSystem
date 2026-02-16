@@ -102,6 +102,9 @@ public class DailySnapshot
     public decimal YTDReturn { get; set; }
     public decimal MaxDrawdown { get; set; }
     public decimal HighWaterMark { get; set; }
+    public bool DailyStopTriggered { get; set; }
+    public bool WeeklyStopTriggered { get; set; }
+    public bool DrawdownHaltTriggered { get; set; }
     
     // Activity
     public int TradesExecuted { get; set; }

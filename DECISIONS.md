@@ -182,6 +182,13 @@
 
 ---
 
+### ADR-025: Persisted Snapshot Baselines for Risk Stops and Drawdown Alerts
+**Date:** 2026-02-16 | **Status:** Decided | **Rationale:** Stop logic based only on current unrealized P&L is too noisy and does not track true account drawdown over time.
+**Decision:** `RiskManager` uses `ISnapshotRepository` baselines for daily/weekly P&L and computes high-water mark/current/max drawdown from persisted snapshots. Stop alerts are sent through `IRiskAlertService` only on state transitions (new trigger events) to avoid duplicate alert spam.
+**Consequences:** Risk metrics now require snapshot persistence registration in DI. Discord webhook configuration is required for external alert delivery; without it alerts degrade to logs.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options

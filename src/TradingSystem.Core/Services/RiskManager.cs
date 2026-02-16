@@ -15,17 +15,24 @@ public class RiskManager : IRiskManager
     private readonly ICalendarService _calendar;
     private readonly TradingSystemConfig _config;
     private readonly ILogger<RiskManager> _logger;
+    private readonly ISnapshotRepository? _snapshotRepository;
+    private readonly IRiskAlertService _riskAlertService;
+    private static readonly IRiskAlertService NoOpAlertService = new NoOpRiskAlertService();
 
     public RiskManager(
         IBrokerService broker,
         ICalendarService calendar,
         IOptions<TradingSystemConfig> config,
-        ILogger<RiskManager> logger)
+        ILogger<RiskManager> logger,
+        ISnapshotRepository? snapshotRepository = null,
+        IRiskAlertService? riskAlertService = null)
     {
         _broker = broker;
         _calendar = calendar;
         _config = config.Value;
         _logger = logger;
+        _snapshotRepository = snapshotRepository;
+        _riskAlertService = riskAlertService ?? NoOpAlertService;
     }
 
     public async Task<RiskValidationResult> ValidateSignalAsync(
@@ -162,7 +169,7 @@ public class RiskManager : IRiskManager
     public async Task<bool> IsTradingHaltedAsync(CancellationToken cancellationToken = default)
     {
         var metrics = await GetRiskMetricsAsync(cancellationToken);
-        return metrics.DailyStopTriggered || metrics.WeeklyStopTriggered;
+        return metrics.DailyStopTriggered || metrics.WeeklyStopTriggered || metrics.DrawdownHaltTriggered;
     }
 
     public Task<PositionLimitResult> CheckPositionLimitsAsync(
@@ -268,39 +275,204 @@ public class RiskManager : IRiskManager
             ? account.GrossPositionValue
             : positions.Sum(p => Math.Abs(p.MarketValue));
         var netExposure = positions.Sum(p => p.MarketValue);
+        var today = DateTime.UtcNow.Date;
+        var snapshots = await LoadSnapshotsAsync(today, cancellationToken);
+        var todaySnapshot = snapshots.LastOrDefault(s => s.Date.Date == today);
+        var priorSnapshots = snapshots
+            .Where(s => s.Date.Date < today)
+            .OrderBy(s => s.Date.Date)
+            .ToList();
 
-        var dailyPnLPercent = account.NetLiquidationValue != 0m
-            ? unrealizedPnL / account.NetLiquidationValue
-            : 0m;
-        var weeklyPnLPercent = dailyPnLPercent;
+        var dailyBaseline = priorSnapshots.LastOrDefault()?.NetLiquidationValue;
+        var dailyPnL = dailyBaseline.HasValue
+            ? account.NetLiquidationValue - dailyBaseline.Value
+            : unrealizedPnL;
+        var dailyPnLPercent = CalculatePercent(
+            dailyPnL,
+            dailyBaseline ?? account.NetLiquidationValue);
+
+        var weeklyBaseline = GetWeeklyBaseline(today, priorSnapshots) ?? dailyBaseline ?? account.NetLiquidationValue;
+        var weeklyPnL = account.NetLiquidationValue - weeklyBaseline;
+        var weeklyPnLPercent = CalculatePercent(weeklyPnL, weeklyBaseline);
+
+        var historicalHighWater = priorSnapshots
+            .Select(s => Math.Max(s.HighWaterMark, s.NetLiquidationValue))
+            .DefaultIfEmpty(account.NetLiquidationValue)
+            .Max();
+        var highWaterMark = Math.Max(historicalHighWater, account.NetLiquidationValue);
+        var currentDrawdown = CalculateDrawdown(account.NetLiquidationValue, highWaterMark);
+        var historicalMaxDrawdown = priorSnapshots
+            .Select(s => s.MaxDrawdown)
+            .DefaultIfEmpty(0m)
+            .Max();
+        var maxDrawdown = Math.Max(historicalMaxDrawdown, currentDrawdown);
 
         var metrics = new RiskMetrics
         {
-            DailyPnL = unrealizedPnL,
+            DailyPnL = dailyPnL,
             DailyPnLPercent = dailyPnLPercent,
-            WeeklyPnL = unrealizedPnL,
+            WeeklyPnL = weeklyPnL,
             WeeklyPnLPercent = weeklyPnLPercent,
-            MaxDrawdown = 0m,
-            CurrentDrawdown = 0m,
+            HighWaterMark = highWaterMark,
+            MaxDrawdown = maxDrawdown,
+            CurrentDrawdown = currentDrawdown,
             DailyStopTriggered = dailyPnLPercent <= -_config.Risk.DailyStopPercent,
             WeeklyStopTriggered = weeklyPnLPercent <= -_config.Risk.WeeklyStopPercent,
+            DrawdownHaltTriggered = currentDrawdown >= _config.Risk.MaxDrawdownHalt,
             OpenPositionCount = positions.Count,
             GrossExposure = grossExposure,
             NetExposure = netExposure,
             LastUpdated = DateTime.UtcNow
         };
 
-        if (metrics.DailyStopTriggered || metrics.WeeklyStopTriggered)
+        await SendStopAlertsIfNeededAsync(metrics, todaySnapshot, cancellationToken);
+        await PersistSnapshotAsync(account, positions, metrics, cancellationToken);
+
+        if (metrics.DailyStopTriggered || metrics.WeeklyStopTriggered || metrics.DrawdownHaltTriggered)
         {
             _logger.LogWarning(
-                "Risk stop triggered: daily={DailyTriggered} ({DailyPnLPercent:P2}), weekly={WeeklyTriggered} ({WeeklyPnLPercent:P2})",
+                "Risk stop triggered: daily={DailyTriggered} ({DailyPnLPercent:P2}), weekly={WeeklyTriggered} ({WeeklyPnLPercent:P2}), drawdown={DrawdownTriggered} ({CurrentDrawdown:P2})",
                 metrics.DailyStopTriggered,
                 metrics.DailyPnLPercent,
                 metrics.WeeklyStopTriggered,
-                metrics.WeeklyPnLPercent);
+                metrics.WeeklyPnLPercent,
+                metrics.DrawdownHaltTriggered,
+                metrics.CurrentDrawdown);
         }
 
         return metrics;
+    }
+
+    private async Task<List<DailySnapshot>> LoadSnapshotsAsync(
+        DateTime today,
+        CancellationToken cancellationToken)
+    {
+        if (_snapshotRepository == null)
+            return new List<DailySnapshot>();
+
+        var startDate = today.AddDays(-30);
+        var endDate = today;
+        return await _snapshotRepository.GetSnapshotsAsync(startDate, endDate, cancellationToken);
+    }
+
+    private static decimal? GetWeeklyBaseline(DateTime today, IReadOnlyCollection<DailySnapshot> snapshots)
+    {
+        var weekStart = StartOfWeek(today);
+        var weekSnapshot = snapshots
+            .Where(s => s.Date.Date >= weekStart)
+            .OrderBy(s => s.Date.Date)
+            .FirstOrDefault();
+
+        return weekSnapshot?.NetLiquidationValue;
+    }
+
+    private static DateTime StartOfWeek(DateTime date)
+    {
+        var delta = (7 + (date.DayOfWeek - DayOfWeek.Monday)) % 7;
+        return date.AddDays(-delta).Date;
+    }
+
+    private static decimal CalculatePercent(decimal numerator, decimal denominator)
+    {
+        if (denominator == 0m)
+            return 0m;
+
+        return numerator / denominator;
+    }
+
+    private static decimal CalculateDrawdown(decimal currentValue, decimal highWaterMark)
+    {
+        if (highWaterMark <= 0m)
+            return 0m;
+
+        var drawdown = (highWaterMark - currentValue) / highWaterMark;
+        return Math.Max(0m, drawdown);
+    }
+
+    private async Task SendStopAlertsIfNeededAsync(
+        RiskMetrics metrics,
+        DailySnapshot? todaySnapshot,
+        CancellationToken cancellationToken)
+    {
+        if (_snapshotRepository == null)
+            return;
+
+        var wasDailyTriggered = todaySnapshot?.DailyStopTriggered == true;
+        var wasWeeklyTriggered = todaySnapshot?.WeeklyStopTriggered == true;
+        var wasDrawdownTriggered = todaySnapshot?.DrawdownHaltTriggered == true;
+
+        if (metrics.DailyStopTriggered && !wasDailyTriggered)
+        {
+            await _riskAlertService.SendDailyStopTriggeredAsync(metrics, cancellationToken);
+        }
+
+        if (metrics.WeeklyStopTriggered && !wasWeeklyTriggered)
+        {
+            await _riskAlertService.SendWeeklyStopTriggeredAsync(metrics, cancellationToken);
+        }
+
+        if (metrics.DrawdownHaltTriggered && !wasDrawdownTriggered)
+        {
+            await _riskAlertService.SendDrawdownHaltTriggeredAsync(metrics, cancellationToken);
+        }
+    }
+
+    private async Task PersistSnapshotAsync(
+        Account account,
+        IReadOnlyCollection<Position> positions,
+        RiskMetrics metrics,
+        CancellationToken cancellationToken)
+    {
+        if (_snapshotRepository == null)
+            return;
+
+        var incomeSleeveValue = account.IncomeSleeveValue > 0m
+            ? account.IncomeSleeveValue
+            : positions
+                .Where(p => p.Sleeve == SleeveType.Income)
+                .Sum(p => Math.Abs(p.MarketValue));
+        var tacticalSleeveValue = account.TacticalSleeveValue > 0m
+            ? account.TacticalSleeveValue
+            : positions
+                .Where(p => p.Sleeve == SleeveType.Tactical)
+                .Sum(p => Math.Abs(p.MarketValue));
+        var cashValue = account.TotalCashValue > 0m
+            ? account.TotalCashValue
+            : account.AvailableFunds;
+
+        var snapshot = new DailySnapshot
+        {
+            Date = metrics.LastUpdated.Date,
+            NetLiquidationValue = account.NetLiquidationValue,
+            CashValue = cashValue,
+            IncomeSleeveValue = incomeSleeveValue,
+            TacticalSleeveValue = tacticalSleeveValue,
+            DailyPnL = metrics.DailyPnL,
+            DailyPnLPercent = metrics.DailyPnLPercent,
+            RealizedPnL = 0m,
+            UnrealizedPnL = positions.Sum(p => p.UnrealizedPnL),
+            MaxDrawdown = metrics.MaxDrawdown,
+            HighWaterMark = metrics.HighWaterMark,
+            DailyStopTriggered = metrics.DailyStopTriggered,
+            WeeklyStopTriggered = metrics.WeeklyStopTriggered,
+            DrawdownHaltTriggered = metrics.DrawdownHaltTriggered,
+            OpenPositions = metrics.OpenPositionCount,
+            GrossExposure = metrics.GrossExposure
+        };
+
+        await _snapshotRepository.SaveDailySnapshotAsync(snapshot, cancellationToken);
+    }
+
+    private sealed class NoOpRiskAlertService : IRiskAlertService
+    {
+        public Task SendDailyStopTriggeredAsync(RiskMetrics metrics, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SendWeeklyStopTriggeredAsync(RiskMetrics metrics, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SendDrawdownHaltTriggeredAsync(RiskMetrics metrics, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     private static bool IsSignalExecutable(Signal signal)
