@@ -19,6 +19,10 @@
     "IBKR:Host": "127.0.0.1",
     "IBKR:Port": "7497",
     "IBKR:ClientId": "1",
+
+    "Discord:Enabled": "true",
+    "Discord:WebhookUrl": "YOUR_DISCORD_WEBHOOK_URL",
+    "Discord:Username": "TradingSystem Risk",
     
     "Claude:ApiKey": "YOUR_CLAUDE_API_KEY",
     "Claude:Model": "claude-sonnet-4-20250514"

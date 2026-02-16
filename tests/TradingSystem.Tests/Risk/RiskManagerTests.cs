@@ -180,7 +180,94 @@ public class RiskManagerTests
         Assert.True(metrics.GrossExposure > 0m);
     }
 
-    private static RiskManager CreateRiskManager(Account account, bool noTradeWindow)
+    [Fact]
+    public async Task GetRiskMetricsAsync_UsesPersistedBaselineAndDrawdown()
+    {
+        var snapshots = new InMemorySnapshotRepository(
+            new DailySnapshot
+            {
+                Date = DateTime.UtcNow.Date.AddDays(-1),
+                NetLiquidationValue = 100_000m,
+                HighWaterMark = 110_000m,
+                MaxDrawdown = 0.05m
+            });
+
+        var account = CreateAccount(
+            95_000m,
+            new Position
+            {
+                Symbol = "SPY",
+                Sleeve = SleeveType.Tactical,
+                Quantity = 10,
+                AverageCost = 100m,
+                MarketPrice = 100m
+            });
+
+        var manager = CreateRiskManager(account, noTradeWindow: false, snapshotRepository: snapshots);
+        var metrics = await manager.GetRiskMetricsAsync();
+
+        Assert.Equal(-5_000m, metrics.DailyPnL);
+        Assert.Equal(-0.05m, metrics.DailyPnLPercent);
+        Assert.Equal(110_000m, metrics.HighWaterMark);
+        Assert.InRange(metrics.CurrentDrawdown, 0.136m, 0.137m);
+        Assert.Equal(metrics.CurrentDrawdown, metrics.MaxDrawdown);
+    }
+
+    [Fact]
+    public async Task GetRiskMetricsAsync_DailyStopAlertSentOnlyOnTransition()
+    {
+        var snapshots = new InMemorySnapshotRepository();
+        var alerts = CreateNoOpAlertMock();
+        var account = CreateAccount(
+            100_000m,
+            new Position
+            {
+                Symbol = "SPY",
+                Sleeve = SleeveType.Tactical,
+                Quantity = 100,
+                AverageCost = 100m,
+                MarketPrice = 70m
+            });
+
+        var manager = CreateRiskManager(
+            account,
+            noTradeWindow: false,
+            snapshotRepository: snapshots,
+            alertService: alerts);
+
+        await manager.GetRiskMetricsAsync();
+        await manager.GetRiskMetricsAsync();
+
+        alerts.Verify(
+            a => a.SendDailyStopTriggeredAsync(It.IsAny<RiskMetrics>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task IsTradingHaltedAsync_DrawdownHaltTriggered_ReturnsTrue()
+    {
+        var snapshots = new InMemorySnapshotRepository(
+            new DailySnapshot
+            {
+                Date = DateTime.UtcNow.Date.AddDays(-1),
+                NetLiquidationValue = 95_000m,
+                HighWaterMark = 110_000m,
+                MaxDrawdown = 0.08m
+            });
+
+        var account = CreateAccount(95_000m);
+        var manager = CreateRiskManager(account, noTradeWindow: false, snapshotRepository: snapshots);
+
+        var halted = await manager.IsTradingHaltedAsync();
+
+        Assert.True(halted);
+    }
+
+    private static RiskManager CreateRiskManager(
+        Account account,
+        bool noTradeWindow,
+        InMemorySnapshotRepository? snapshotRepository = null,
+        Mock<IRiskAlertService>? alertService = null)
     {
         var brokerMock = new Mock<IBrokerService>();
         brokerMock.Setup(b => b.GetAccountAsync(It.IsAny<CancellationToken>()))
@@ -201,7 +288,8 @@ public class RiskManagerTests
                 WeeklyStopPercent = 0.04m,
                 MaxSingleEquityPercent = 0.05m,
                 MaxSingleSpreadPercent = 0.02m,
-                MaxGrossLeverage = 1.2m
+                MaxGrossLeverage = 1.2m,
+                MaxDrawdownHalt = 0.10m
             },
             Income = new IncomeConfig
             {
@@ -210,11 +298,28 @@ public class RiskManagerTests
             }
         };
 
+        snapshotRepository ??= new InMemorySnapshotRepository();
+        alertService ??= CreateNoOpAlertMock();
+
         return new RiskManager(
             brokerMock.Object,
             calendarMock.Object,
             Microsoft.Extensions.Options.Options.Create(config),
-            NullLogger<RiskManager>.Instance);
+            NullLogger<RiskManager>.Instance,
+            snapshotRepository,
+            alertService.Object);
+    }
+
+    private static Mock<IRiskAlertService> CreateNoOpAlertMock()
+    {
+        var mock = new Mock<IRiskAlertService>();
+        mock.Setup(a => a.SendDailyStopTriggeredAsync(It.IsAny<RiskMetrics>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mock.Setup(a => a.SendWeeklyStopTriggeredAsync(It.IsAny<RiskMetrics>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mock.Setup(a => a.SendDrawdownHaltTriggeredAsync(It.IsAny<RiskMetrics>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return mock;
     }
 
     private static Account CreateAccount(decimal netLiq, params Position[] positions)
@@ -251,5 +356,44 @@ public class RiskManagerTests
             ExpiresAt = DateTime.UtcNow.AddHours(1),
             Status = SignalStatus.Active
         };
+    }
+
+    private sealed class InMemorySnapshotRepository : ISnapshotRepository
+    {
+        private readonly List<DailySnapshot> _snapshots = new();
+
+        public InMemorySnapshotRepository(params DailySnapshot[] snapshots)
+        {
+            _snapshots.AddRange(snapshots);
+        }
+
+        public Task SaveDailySnapshotAsync(DailySnapshot snapshot, CancellationToken cancellationToken = default)
+        {
+            var index = _snapshots.FindIndex(s => s.Date.Date == snapshot.Date.Date);
+            if (index >= 0)
+                _snapshots[index] = snapshot;
+            else
+                _snapshots.Add(snapshot);
+
+            return Task.CompletedTask;
+        }
+
+        public Task<DailySnapshot?> GetSnapshotAsync(DateTime date, CancellationToken cancellationToken = default)
+        {
+            var snapshot = _snapshots.FirstOrDefault(s => s.Date.Date == date.Date);
+            return Task.FromResult(snapshot);
+        }
+
+        public Task<List<DailySnapshot>> GetSnapshotsAsync(
+            DateTime startDate,
+            DateTime endDate,
+            CancellationToken cancellationToken = default)
+        {
+            var items = _snapshots
+                .Where(s => s.Date.Date >= startDate.Date && s.Date.Date <= endDate.Date)
+                .OrderBy(s => s.Date.Date)
+                .ToList();
+            return Task.FromResult(items);
+        }
     }
 }
