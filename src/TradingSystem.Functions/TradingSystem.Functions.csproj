@@ -16,6 +16,7 @@
     <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.22.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="1.1.0" />
     <PackageReference Include="Azure.Identity" Version="1.10.4" />
+    <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.3.2" />
   </ItemGroup>
   
   <ItemGroup>
@@ -23,6 +24,8 @@
     <ProjectReference Include="..\TradingSystem.Brokers.IBKR\TradingSystem.Brokers.IBKR.csproj" />
     <ProjectReference Include="..\TradingSystem.Strategies\TradingSystem.Strategies.csproj" />
     <ProjectReference Include="..\TradingSystem.AI\TradingSystem.AI.csproj" />
+    <ProjectReference Include="..\TradingSystem.Storage\TradingSystem.Storage.csproj" />
+    <ProjectReference Include="..\TradingSystem.MarketData.Polygon\TradingSystem.MarketData.Polygon.csproj" />
   </ItemGroup>
   
   <ItemGroup>

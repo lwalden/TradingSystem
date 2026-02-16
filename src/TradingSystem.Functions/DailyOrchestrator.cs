@@ -1,9 +1,10 @@
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
-using TradingSystem.Core.Models;
+using TradingSystem.Strategies.Options;
 
 namespace TradingSystem.Functions;
 
@@ -14,13 +15,16 @@ public class DailyOrchestrator
 {
     private readonly ILogger<DailyOrchestrator> _logger;
     private readonly TradingSystemConfig _config;
+    private readonly IServiceProvider _serviceProvider;
 
     public DailyOrchestrator(
         ILogger<DailyOrchestrator> logger,
-        IOptions<TradingSystemConfig> config)
+        IOptions<TradingSystemConfig> config,
+        IServiceProvider serviceProvider)
     {
         _logger = logger;
         _config = config.Value;
+        _serviceProvider = serviceProvider;
     }
 
     /// <summary>
@@ -37,14 +41,7 @@ public class DailyOrchestrator
 
         try
         {
-            // TODO: Implement when services are ready
-            // 1. Check if trading halted
-            // 2. Connect to broker, sync account
-            // 3. Get market regime
-            // 4. Build strategy context
-            // 5. Evaluate all strategies
-            // 6. Risk-validate signals
-            // 7. Execute signals
+            await RunOptionsSleeveAsync(runId, cancellationToken);
 
             _logger.LogInformation("Pre-market orchestration complete. RunId: {RunId}", runId);
         }
@@ -83,5 +80,73 @@ public class DailyOrchestrator
             _logger.LogError(ex, "End-of-day processing failed. RunId: {RunId}", runId);
             throw;
         }
+    }
+
+    private async Task RunOptionsSleeveAsync(string runId, CancellationToken cancellationToken)
+    {
+        var broker = _serviceProvider.GetService<IBrokerService>();
+        if (broker == null)
+        {
+            _logger.LogWarning("IBrokerService not registered. Skipping options sleeve. RunId: {RunId}", runId);
+            return;
+        }
+
+        var connected = await broker.ConnectAsync(cancellationToken);
+        if (!connected)
+        {
+            _logger.LogWarning("Could not connect to broker. Skipping options sleeve. RunId: {RunId}", runId);
+            return;
+        }
+
+        try
+        {
+            var optionsManager = _serviceProvider.GetRequiredService<OptionsSleeveManager>();
+            var symbols = GetOptionSymbols();
+            if (symbols.Count == 0)
+            {
+                _logger.LogInformation("No options symbols configured. RunId: {RunId}", runId);
+                return;
+            }
+
+            var result = await optionsManager.RunDailyAsync(symbols, cancellationToken);
+            _logger.LogInformation(
+                "Options sleeve run complete. RunId: {RunId}, Symbols: {SymbolCount}, Candidates: {Candidates}, LifecycleActions: {LifecycleActions}, NewEntries: {NewEntries}, Success: {Success}, Failures: {Failures}, Halted: {Halted}",
+                runId,
+                symbols.Count,
+                result.CandidatesScanned,
+                result.LifecycleActionsTriggered,
+                result.NewEntriesOpened,
+                result.SuccessfulExecutions,
+                result.FailedExecutions,
+                result.TradingHalted);
+
+            if (result.Warnings.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Options sleeve warnings. RunId: {RunId}. {Warnings}",
+                    runId,
+                    string.Join(" | ", result.Warnings));
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Options sleeve dependencies are not fully wired. Skipping options sleeve run. RunId: {RunId}",
+                runId);
+        }
+        finally
+        {
+            await broker.DisconnectAsync();
+        }
+    }
+
+    private List<string> GetOptionSymbols()
+    {
+        return _config.Tactical.OptionUniverse
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim().ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 }
