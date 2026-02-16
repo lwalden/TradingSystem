@@ -147,6 +147,34 @@
 
 ---
 
+### ADR-020: Dynamic Sleeve Activation and Live Allocation
+**Date:** 2026-02-16 | **Status:** Decided | **Rationale:** Fixed 70/30 live allocation is too rigid. Sleeves should earn live capital through paper validation, and activation may be staged.
+**Decision:** Run both sleeves in paper validation. For live trading, activate one or both sleeves based on validation results. Human chooses final capital split at live transition. Expected deployable capital range is ~$10,000-$400,000 at decision time, with a minimum of $100,000 per active sleeve account.
+**Consequences:** System must provide sleeve-level readiness scorecards and allocation recommendations. Live path must not hard-code 70/30.
+
+---
+
+### ADR-021: Rebalancing and Capital Flows Are Human-Executed
+**Date:** 2026-02-16 | **Status:** Decided | **Rationale:** Capital movement decisions require human context (taxes, external cash needs, account constraints).
+**Decision:** System provides rebalance/transfer/withdrawal recommendations; human executes actual rebalancing and cash movement. For options sleeve, only free cash may be withdrawn (not cash reserved against open options positions). For income sleeve, cash withdrawals and occasional stock sales for withdrawals are allowed.
+**Consequences:** Reporting must include recommendation rationale and collateral-aware free-cash calculations. No automatic rebalance/capital-transfer execution.
+
+---
+
+### ADR-022: Phase-Gated Clarification Prompts
+**Date:** 2026-02-16 | **Status:** Decided | **Rationale:** Unknowns should not stall implementation, but dependent automation must pause for owner input at defined gates.
+**Decision:** Add explicit phase-gated checkpoints where Claude prompts the owner before proceeding with dependent automation (options lifecycle rules, recommendation format, paper validation criteria, live activation split, post-live tuning).
+**Consequences:** Roadmap/progress docs must maintain gate checkpoints. Claude should stop and prompt at each gate before advancing.
+
+---
+
+### ADR-023: Cost Ceiling Scope and Brokerage Forecasting
+**Date:** 2026-02-16 | **Status:** Decided | **Rationale:** Platform cost control and brokerage activity costs behave differently and should be tracked separately.
+**Decision:** The <$100 monthly ceiling applies to platform costs (Azure + Polygon.io + Claude API). Brokerage commissions/fees are tracked and forecasted separately (conservative per contract-side model in reporting).
+**Consequences:** Reports must break out platform vs brokerage costs and include activity-based fee forecasts.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
@@ -160,5 +188,13 @@ Defer until post-live planning.
 ### PDR-003: Swing Trade Third Sleeve
 **Blocking:** Nothing (independent) | **Needs:** Options sleeve proven in live trading
 Potential future addition after options sleeve is validated.
+
+### PDR-004: Sleeve-Level Validation Thresholds for Live Activation
+**Blocking:** Final go-live recommendation logic | **Needs:** Numeric pass/fail criteria by sleeve
+Define exact per-sleeve thresholds (return/risk/consistency metrics) that qualify a sleeve for live activation.
+
+### PDR-005: Initial Live Sleeve Set and Capital Split
+**Blocking:** Live transition execution plan | **Needs:** Paper validation outputs + owner decision
+Select which sleeve(s) activate first and final initial capital split/account mapping at live transition.
 
 ---
