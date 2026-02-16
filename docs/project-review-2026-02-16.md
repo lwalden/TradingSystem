@@ -15,7 +15,7 @@ This project should now be treated as a two-sleeve platform with flexible live a
 Confirmed rules:
 1. Paper validation phase: both sleeves should be runnable and evaluated, with a baseline of $100,000 available for validation.
 2. Live activation: go live only for sleeves that pass validation expectations.
-3. Capital envelope before live split decision: expected total deployable capital is approximately $10,000 to $400,000, with a minimum of $100,000 for any sleeve activated live.
+3. Capital envelope before live split decision: expected total deployable capital is approximately $100,000 to $400,000, with a minimum of $100,000 for any sleeve activated live.
 4. Live activation can be staggered: one sleeve may go live first; the other can be added later after additional paper refinement.
 5. Rebalancing: system provides recommendations; human executes actual rebalancing manually.
 6. Cash flow operations are human-driven: deposits/withdrawals can occur over time per sleeve/account.
