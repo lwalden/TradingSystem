@@ -175,6 +175,13 @@
 
 ---
 
+### ADR-024: Pre-Market Orchestrator Degrades Gracefully When Options DI Is Incomplete
+**Date:** 2026-02-16 | **Status:** Decided | **Rationale:** Week 8 wiring needs to land before Week 9 risk engine is complete. Scheduled pre-market runs should not hard-fail while `IRiskManager` is still missing.
+**Decision:** `DailyOrchestrator` attempts options sleeve execution each pre-market run, but if required options dependencies cannot be resolved, it logs a warning and skips options execution for that run. Broker connect/disconnect handling remains explicit and safe.
+**Consequences:** Timer runs stay healthy during staged integration. Options sleeve remains inactive until `IRiskManager` concrete implementation is added and registered.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
