@@ -117,6 +117,8 @@ public class OptionsConfig
     public int MinOpenInterest { get; set; } = 250;
     public decimal MaxSpreadDollars { get; set; } = 0.10m;
     public decimal MaxSpreadPercent { get; set; } = 0.025m; // 2.5%
+    public int MaxOpenPositions { get; set; } = 10;
+    public int MaxPositionsPerUnderlying { get; set; } = 2;
     
     // Short premium requirements
     public decimal MinIVPercentile { get; set; } = 50m;
