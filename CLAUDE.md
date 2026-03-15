@@ -87,25 +87,18 @@ Files on disk and staged changes are preserved. Next session: `git status` and `
 - **NEVER** trade within no-trade windows for special reasons without explicit human approval
 - All trading logic must be deterministic (rule-based); AI is for analysis only
 
+### Decision Recording
+- Record significant architectural decisions in DECISIONS.md (library choices, API contracts, auth approach, data model changes, deploy decisions)
+- Record known shortcuts and workarounds in the Known Debt section of DECISIONS.md
+- Include alternatives considered — a decision without alternatives is an assertion, not a record
+- To auto-load DECISIONS.md every session, add `@DECISIONS.md` to this file
+
 ---
 
 ## Context Budget
 
-Keep per-session context lean:
+> Use `/context` for real-time context usage and optimization tips.
 
-| File | Target Size | Action if Exceeded |
-|------|------------|-------------------|
-| CLAUDE.md | ~100 lines | Don't add to this file without removing something |
-| PROGRESS.md | ~15-20 lines active | Run `/archive` when it exceeds 100 lines |
-| DECISIONS.md | Grows over time | Move superseded ADRs to `docs/archive/` |
+**Always loaded:** CLAUDE.md — keep under ~100 lines; don't add without removing something
 
-**Session Management:**
-- Use `/clear` to reset conversation when switching to an unrelated task
-- For long sessions, Claude Code will auto-compact history -- this is normal
-- If a session gets slow or unfocused, run `/checkpoint` and start a fresh session
-
-**File Reading Strategy:**
-- PROGRESS.md: Read every session (first thing)
-- DECISIONS.md: Read before architectural choices (prevent re-debating)
-- strategy-roadmap.md & ARCHITECTURE.md: Read on-demand for context
-- Never read `docs/archive/*` unless asked
+**On-demand:** DECISIONS.md — add `@DECISIONS.md` here to auto-load; delete superseded entries
