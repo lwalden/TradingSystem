@@ -212,3 +212,27 @@ Define exact per-sleeve thresholds (return/risk/consistency metrics) that qualif
 Select which sleeve(s) activate first and final initial capital split/account mapping at live transition.
 
 ---
+
+## Project State Snapshot | 2026-02-16 | Migrated from PROGRESS.md
+
+**Phase:** 1 — Foundation (Week 9 complete, 418 tests passing)
+
+### Completed Through Week 9
+- Weeks 1-8: IBKR connection, market data, storage, orders, income sleeve, option chains, IV rank, screening, Polygon.io calendar, multi-leg orders, options lifecycle, execution service, orchestration wiring, pre-market tests
+- Week 9: Concrete `RiskManager` with per-trade checks, stop-halt, position/cap enforcement, no-trade windows; snapshot-backed drawdown tracking; Discord stop alerts via `IRiskAlertService`; Azure.Identity upgraded to 1.17.1
+
+### Blockers (as of last session)
+- Discord webhook: server/channel not yet created — needed for stop alerts to deliver externally
+- Claude API key: needed for regime service integration (Week 10)
+
+### Next Steps
+1. Begin Claude regime service integration; prompt for Claude API key at gate
+2. Validate Discord webhook configuration so stop alerts can deliver
+3. Add low-friction smoke scenario in `TradingSystem.SmokeTest` for orchestrator path without live IBKR
+
+## Known Debt
+
+| ID | Description | Impact | Logged |
+|---|---|---|---|
+| KD-001 | Discord webhook not configured | Stop alerts silently drop | 2026-02-16 |
+| KD-002 | Claude API key not provisioned | Regime service integration blocked | 2026-02-16 |

@@ -1,35 +1,8 @@
 # CLAUDE.md - Project Instructions
 
 > Claude reads this file automatically at the start of every session.
-> Keep it concise -- every line here costs context tokens on every session.
->
-> **File Reading Order:** PROGRESS.md first → DECISIONS.md when making architectural choices → other docs on-demand.
-
----
-
-## Session Protocol
-
-### Starting a Session
-1. Read `PROGRESS.md` -- understand current state and what to work on
-2. Run `git status` -- check for uncommitted work from previous sessions
-3. Run `gh pr list` -- check for open PRs awaiting review
-4. Check "Blocked / Awaiting Human" section -- ask user about pending items
-5. Resume from "Next Session Should" in PROGRESS.md
-
-### During a Session
-- Write code to files immediately -- don't accumulate large changes in memory
-- Commit at natural checkpoints (compiles, tests pass, logical unit complete)
-- Prefer smaller, frequent commits over one large commit at the end
-- Update PROGRESS.md before starting complex multi-step operations
-
-### Ending a Session
-Run `/checkpoint` or manually:
-1. Update PROGRESS.md with completed tasks, blockers, and next priorities
-2. Update DECISIONS.md if any architectural decisions were made
-3. Commit tracking changes
-
-### If Session Ends Unexpectedly (Token Limits)
-Files on disk and staged changes are preserved. Next session: `git status` and `git diff` show partial work.
+> Keep it concise — every line costs context tokens.
+> Use `claude --continue` to restore the previous session's full message history.
 
 ---
 
@@ -67,8 +40,13 @@ Files on disk and staged changes are preserved. Next session: `git status` and `
 - When you need a credential, ask: "Please provide your [SERVICE] API key. I'll store it in .env."
 
 ### Autonomy Boundaries
-**You CAN autonomously:** Create files, install NuGet packages, run builds/tests, create branches and PRs, scaffold code, manage dependencies
-**Ask the human first:** Create GitHub repos, merge PRs, sign up for services, provide API keys, approve major architectural changes, make billing decisions, switch from sandbox to live trading, change risk parameters or sleeve allocations
+**You CAN autonomously:** Create files, install NuGet packages, run builds/tests, create branches and PRs, scaffold code, manage dependencies, install and use CLI tools, query cloud services and APIs
+
+**Only when explicitly asked:** Merge PRs
+
+**Ask the human first:** Create GitHub repos, sign up for services, provide API keys, approve major architectural changes, make billing decisions, switch from sandbox to live trading, change risk parameters or sleeve allocations
+
+**Tool-first rule:** See `.claude/rules/tool-first.md` — never ask the user to do something you can do with a tool
 
 ### Communication
 - Lead with a TL;DR, then provide detail
@@ -101,4 +79,4 @@ Files on disk and staged changes are preserved. Next session: `git status` and `
 
 **Always loaded:** CLAUDE.md — keep under ~100 lines; don't add without removing something
 
-**On-demand:** DECISIONS.md — add `@DECISIONS.md` here to auto-load; delete superseded entries
+**On-demand:** DECISIONS.md — add `@DECISIONS.md` here to auto-load; move superseded ADRs to `docs/archive/`
