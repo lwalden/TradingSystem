@@ -1,3 +1,7 @@
+---
+description: Scope governance — check new work against the roadmap before implementing
+---
+
 # Scope Guardian
 # AIAgentMinder-managed. Delete this file to opt out of scope governance.
 
