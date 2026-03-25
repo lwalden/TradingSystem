@@ -3,131 +3,61 @@ description: Architecture fitness rules — structural constraints for this proj
 ---
 
 # Architecture Fitness Rules
-# AIAgentMinder-managed. Delete this file to opt out of architecture fitness enforcement.
+# AIAgentMinder-managed. Customize the rules below to match your project's architecture.
+# Delete this file to opt out of architecture fitness enforcement.
 
-## Layer Boundaries
+## How to Use This File
 
-The solution has six logical layers. Each layer may only reference layers listed after it.
+These rules are enforced by Claude during code review, PR creation, and when writing new code.
+Replace the examples below with constraints that match YOUR project's architecture.
+Each rule should be specific enough that Claude can check it mechanically.
 
-| Layer | Project | May Reference |
-|---|---|---|
-| Orchestration | `TradingSystem.Functions` | all layers |
-| Strategy | `TradingSystem.Strategies` | Core, AI, MarketData |
-| Broker | `TradingSystem.Brokers.IBKR` | Core |
-| AI | `TradingSystem.AI` | Core |
-| MarketData | `TradingSystem.MarketData.Polygon` | Core |
-| Storage | `TradingSystem.Storage` | Core |
-| Core | `TradingSystem.Core` | nothing (no project references) |
-
-**Violations to reject:**
-- `TradingSystem.Core` must not reference any other project in the solution.
-- `TradingSystem.Strategies` must not directly reference `TradingSystem.Brokers.IBKR` or `TradingSystem.Storage` — it depends only on interfaces defined in Core.
-- `TradingSystem.Storage` must not reference `TradingSystem.Strategies` or `TradingSystem.Brokers.IBKR`.
-- `TradingSystem.AI` must not reference `TradingSystem.Strategies`, `TradingSystem.Brokers.IBKR`, or `TradingSystem.Storage`.
+Rules that apply only to certain file types can be scoped with glob patterns in the frontmatter:
+```yaml
+globs: ["src/routes/**", "src/handlers/**"]
+```
 
 ---
 
-## External API Calls
+## Structural Constraints
 
-External HTTP calls are confined to dedicated integration projects. No other project may make HTTP calls.
+<!-- Replace these examples with your own. Remove sections that don't apply. -->
 
-| External Service | Allowed Location |
-|---|---|
-| Claude API | `TradingSystem.AI/Services/ClaudeService.cs` only |
-| Polygon.io | `TradingSystem.MarketData.Polygon/Services/PolygonApiClient.cs` only |
-| Discord webhooks | `TradingSystem.Functions/DiscordRiskAlertService.cs` only |
-| IBKR TWS API | `TradingSystem.Brokers.IBKR/` only (via `EClientSocket`, not HTTP) |
+### Layer Boundaries
 
-**Rules:**
-- `HttpClient` must not be instantiated with `new HttpClient()` — use `IHttpClientFactory` or `AddHttpClient<T>()` registration.
-- No `HttpClient`, `WebClient`, or raw socket calls in `TradingSystem.Core`, `TradingSystem.Strategies`, or `TradingSystem.Storage`.
-- Strategy classes must access market data via `IMarketDataService` (Core interface), not by calling `PolygonApiClient` directly.
+<!-- Example: Enforce separation between layers -->
+<!-- Route handlers must not import from the database layer directly.
+     All database access goes through the service layer.
+     Bad: import { db } from '../db' inside a route handler
+     Good: import { UserService } from '../services/user' -->
 
----
+[Define your layer boundary rules here]
 
-## Interface-Based Design
+### External API Calls
 
-Any class that crosses a project boundary must be abstracted behind an interface defined in `TradingSystem.Core/Interfaces/`.
+<!-- Example: Centralize external service calls -->
+<!-- All calls to external HTTP services must go through clients in `src/integrations/`.
+     No direct `fetch()`, `axios.get()`, or HTTP calls from route handlers or services.
+     This ensures retry logic, auth headers, and error handling are applied consistently. -->
 
-**Required interface coverage:**
-- All broker operations: `IBrokerService`
-- All repository operations: `IOrderRepository`, `ISignalRepository`, `IOptionsPositionRepository`, `ISnapshotRepository`, `IConfigRepository`, `IIVHistoryRepository`
-- All strategy classes: `IStrategy` (or `IAIStrategy`)
-- Market data access from strategies: `IMarketDataService`
-- Risk management: `IRiskManager`, `IRiskAlertService`
-- AI analysis: `IClaudeService`
+[Define where external calls are allowed here]
 
-**Rule:** If a service in one project is consumed by another project, it must implement an interface from Core. Concrete types must not be referenced across project boundaries.
+### Test Isolation
 
----
+<!-- Example: Keep tests self-contained -->
+<!-- Test files must not import from other test files.
+     Each test file must be independently runnable.
+     Shared fixtures belong in a `__fixtures__/` or `test/helpers/` directory, not in test files. -->
 
-## Async/Await
+[Define your test structure rules here]
 
-All I/O operations must be async. Blocking on async code is prohibited.
+### File Size Limits
 
-**Rules:**
-- Any method that calls a broker, repository, HTTP client, or file system must return `Task` or `Task<T>`.
-- All public async methods must accept `CancellationToken cancellationToken` as a final parameter.
-- Never use `.Result`, `.Wait()`, or `GetAwaiter().GetResult()` to block on a Task — this can deadlock in Azure Functions.
-- `TaskCompletionSource` must be created with `TaskCreationOptions.RunContinuationsAsynchronously` to avoid deadlocks on the IBKR message pump thread.
+<!-- Example: Flag files that are getting too large to maintain -->
+<!-- If a source file exceeds 300 lines, flag it for decomposition before adding more code.
+     A file that large usually contains more than one responsibility. -->
 
----
-
-## Configuration
-
-Configuration must flow through `IOptions<T>`, not static fields or direct environment variable reads.
-
-**Rules:**
-- Configuration classes live in `TradingSystem.Core/Configuration/` (shared config) or alongside the project that owns them (e.g., `IBKRConfig.cs` in `TradingSystem.Brokers.IBKR`).
-- Register configuration with `services.Configure<T>(context.Configuration.GetSection("..."))` in `Program.cs`.
-- No `Environment.GetEnvironmentVariable()` calls in business logic — only in `Program.cs` bootstrap or configuration binding.
-- Secrets (API keys, connection strings) must not appear in any committed file. Use `local.settings.json` (gitignored) for dev, Azure Key Vault for production.
-
----
-
-## Repository Pattern
-
-Data access must go through repository interfaces. Business logic must not read or write JSON files directly.
-
-**Rules:**
-- All `JsonFileStore` usage must be wrapped in a concrete repository class in `TradingSystem.Storage/Repositories/`.
-- Repository implementations may not contain business logic — only serialization, querying, and persistence.
-- Strategy and service classes must depend on `IXxxRepository` interfaces (from Core), not on `JsonXxxRepository` directly.
-- Each repository handles exactly one entity type (one-to-one mapping: `IOrderRepository` ↔ `Order`).
-
----
-
-## Test Isolation
-
-Tests must be self-contained and independently runnable.
-
-**Rules:**
-- Test projects reference `TradingSystem.Core` and the project under test — not other implementation projects.
-- No test file may import from another test file. Shared helpers belong in a `Helpers/` or `Fixtures/` folder within the test project.
-- Unit tests must not make real network calls, write to the file system, or depend on external services. Use Moq to mock `IBrokerService`, `IMarketDataService`, and repository interfaces.
-- Test method naming: `MethodName_Scenario_ExpectedOutcome` — e.g., `Score_CSP_HighIVAndGoodRoR_ScoresHigh`.
-- Smoke tests (in `TradingSystem.SmokeTest`) are the only tests that may use real external dependencies, and only against sandbox/paper trading accounts.
-
----
-
-## File Size and Responsibility
-
-**Rules:**
-- If a source file exceeds 400 lines, flag it for decomposition before adding more code. Large files typically contain more than one responsibility. (`IBKRBrokerService.cs` at ~824 lines is a known exception — see DECISIONS.md.)
-- Strategy classes must not contain execution logic (placing orders). Execution belongs in `IExecutionService`.
-- Orchestration logic (sequencing calls, error handling across services) belongs in `TradingSystem.Functions`, not in strategy or service classes.
-
----
-
-## Trading Safety
-
-These rules enforce the capital-preservation-first policy.
-
-**Rules:**
-- `TradingMode` (Live vs. Sandbox) must be read from `TradingSystemConfig` via `IOptions<TradingSystemConfig>` — never hard-coded or overridden in code.
-- No code may switch `TradingMode` at runtime. Mode changes require a config update and redeployment.
-- Risk parameters (`MaxDrawdownPercent`, `DailyStopLossPercent`, sleeve allocations) must not be modified by any automated path — only by human config change.
-- Order placement must only occur from `IExecutionService` implementations, never directly from strategy classes or the orchestrator.
+[Define your size thresholds here]
 
 ---
 
