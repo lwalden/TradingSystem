@@ -24,10 +24,8 @@
 ## Behavioral Rules
 
 ### Git Workflow
-- **Never commit directly to main** -- always use feature branches
-- Branch naming: `feature/short-description`, `fix/short-description`, `chore/short-description`
-- All changes via PR. Claude creates PRs; human reviews and merges
-- After human merges: `git checkout main && git pull`, then start next branch
+
+See `.claude/rules/git-workflow.md` — loaded natively by Claude Code each session.
 
 ### PR Format
 - Clear title (under 70 chars), summary of what/why, test plan with verification steps
@@ -40,11 +38,12 @@
 - When you need a credential, ask: "Please provide your [SERVICE] API key. I'll store it in .env."
 
 ### Autonomy Boundaries
-**You CAN autonomously:** Create files, install NuGet packages, run builds/tests, create branches and PRs, scaffold code, manage dependencies, install and use CLI tools, query cloud services and APIs
+
+**You CAN autonomously:** Create files, install packages, run builds/tests, create branches and PRs, scaffold code, install and use CLI tools, query cloud services and APIs
 
 **Only when explicitly asked:** Merge PRs
 
-**Ask the human first:** Create GitHub repos, sign up for services, provide API keys, approve major architectural changes, make billing decisions, switch from sandbox to live trading, change risk parameters or sleeve allocations
+**Ask the human first:** Create GitHub repos, sign up for services, provide API keys, approve major architectural changes
 
 **Tool-first rule:** See `.claude/rules/tool-first.md` — never ask the user to do something you can do with a tool
 
@@ -54,10 +53,9 @@
 - Flag risks early rather than discovering them mid-implementation
 
 ### Verification-First Development
-- Before implementing a feature, confirm requirements by restating what you'll build
-- Write tests appropriate to the project's quality tier (see strategy-roadmap.md)
-- When the quality tier is Standard or above: write failing tests first, then implement
-- Every PR should reference the acceptance criteria from strategy-roadmap.md
+
+- Write failing tests first, then implement
+- Run the full test suite before every commit
 
 ### Trading-Specific Rules
 - **NEVER** switch from SANDBOX to LIVE trading mode without explicit human approval
@@ -66,6 +64,7 @@
 - All trading logic must be deterministic (rule-based); AI is for analysis only
 
 ### Decision Recording
+
 - Record significant architectural decisions in DECISIONS.md (library choices, API contracts, auth approach, data model changes, deploy decisions)
 - Record known shortcuts and workarounds in the Known Debt section of DECISIONS.md
 - Include alternatives considered — a decision without alternatives is an assertion, not a record
@@ -77,6 +76,6 @@
 
 > Use `/context` for real-time context usage and optimization tips.
 
-**Always loaded:** CLAUDE.md — keep under ~100 lines; don't add without removing something
+**Always loaded:** CLAUDE.md — keep under ~50 lines; don't add without removing something
 
-**On-demand:** DECISIONS.md — add `@DECISIONS.md` here to auto-load; move superseded ADRs to `docs/archive/`
+**On-demand:** DECISIONS.md — add `@DECISIONS.md` here to auto-load; delete superseded entries
