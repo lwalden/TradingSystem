@@ -1,25 +1,12 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/hooks/compact-reorient.js",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
+  "statusLine": {
+    "type": "command",
+    "command": "bash .claude/scripts/context-monitor.sh"
   },
   "permissions": {
     "allow": [
-      // Version control
       "Bash(git:*)",
       "Bash(gh:*)",
-
-      // Shell utilities (safe operations)
       "Bash(ls:*)",
       "Bash(dir:*)",
       "Bash(pwd:*)",
@@ -68,21 +55,11 @@
       "Bash(sha256sum:*)",
       "Bash(shasum:*)",
       "Bash(openssl:*)",
-
-      // Containers & orchestration
       "Bash(docker:*)",
       "Bash(docker-compose:*)",
-
-      // .NET build tools
       "Bash(dotnet:*)",
-
-      // Build & test
       "Bash(make:*)",
-
-      // Cloud CLIs
       "Bash(az:*)",
-
-      // Environment & platform tools
       "Bash(winget:*)",
       "Bash(choco:*)",
       "Bash(scoop:*)",
@@ -97,20 +74,6 @@
       "Bash(rm -rf C::*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)"
-    ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/hooks/compact-reorient.js",
-            "timeout": 10
-          }
-        ]
-      }
     ]
   }
 }
