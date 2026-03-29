@@ -75,5 +75,13 @@
       "Bash(git push --force:*)",
       "Bash(git push -f:*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "bash .claude/scripts/context-cycle-hook.sh"
+      }
+    ]
   }
 }
