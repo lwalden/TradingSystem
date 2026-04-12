@@ -458,52 +458,13 @@ The following actions **REQUIRE explicit human approval:**
 
 ## Part 6: Human Actions Required
 
-| Action | What's Needed | When |
-|--------|---------------|------|
-| IBKR Account | Create account, enable paper trading, install TWS | Before Phase 1 |
-| Claude API Key | Sign up at console.anthropic.com | Before Week 9 |
-| Discord Setup | Create server/channel, create webhook | Before Week 10 |
-| Polygon.io | Sign up for Stocks Starter ($29/month) | Before Week 5 |
-| Azure Resources | Create Cosmos DB, Functions, Key Vault (or use Bicep) | Before Week 3 |
-| Paper Validation Capital | Provide baseline $100,000 paper capital for validation phase | Before Week 15 |
-| Live Sleeve Activation | Select which sleeve(s) go live after validation | Before Week 27 |
-| Live Capital Split | Choose final live allocation split and account mapping (minimum $100,000 per active sleeve account) | Before Week 27 |
-| Rebalance Execution | Manually execute system-proposed rebalance/capital transfer actions | Ongoing |
-| Withdrawal/Additions | Decide and execute cash additions/withdrawals by sleeve policy | Ongoing |
+See `docs/handoff-checklist.md` for the full handoff table (IBKR, Azure, Polygon.io, capital decisions, etc.).
 
 ---
 
 ## Part 7: Cost Estimates
 
-**Platform Costs (Target Ceiling Applies Here):**
-
-| Service | Estimated Monthly Cost | Purpose |
-|---------|----------------------|---------|
-| Azure Functions | ~$0-5 | Orchestration |
-| Cosmos DB (Serverless) | ~$5-15 | State & config storage |
-| Key Vault | ~$1 | Secret management |
-| Application Insights | ~$1-5 | Monitoring |
-| Storage Account | ~$1 | Function storage |
-| Claude API | ~$2-10 | Regime detection + quarterly audits + recommendation/report augmentation |
-| Polygon.io | $29 | Earnings calendar |
-| Discord | Free | Notifications |
-| **Platform Total** | **~$40-65/month** | **Target: under $100** |
-
-**Brokerage Commissions & Fees (Tracked Separately):**
-
-Conservative planning model for options activity: assume ~$1.00 all-in per option contract-side.
-
-| Monthly Option Contract-Sides | Estimated Commission/Fee Cost |
-|-----------------------------:|------------------------------:|
-| 100 | ~$100 |
-| 250 | ~$250 |
-| 500 | ~$500 |
-| 1,000 | ~$1,000 |
-
-**All-In Monthly Range (Platform + Brokerage):**
-- Light options activity (100 sides): ~$140-165
-- Moderate options activity (250 sides): ~$290-315
-- Active options activity (500 sides): ~$540-565
+See `docs/cost-model.md` for platform costs, brokerage commission tables, and all-in monthly ranges.
 
 ---
 
