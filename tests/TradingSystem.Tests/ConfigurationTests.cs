@@ -50,6 +50,15 @@ public class ConfigurationTests
 
         Assert.Equal(50, config.MaxDirectApiCallsPerDay);
     }
+
+    [Fact]
+    public void ClaudeConfig_GatewayDefaults()
+    {
+        var config = new ClaudeConfig();
+
+        Assert.Equal("http://localhost:3131/", config.GatewayBaseUrl);
+        Assert.Equal(8, config.GatewayTimeoutSeconds);
+    }
 }
 
 public class PositionSizingTests

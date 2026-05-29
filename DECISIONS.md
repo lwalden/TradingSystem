@@ -210,6 +210,18 @@
 
 ---
 
+### ADR-029: Claude Gateway Transport — Plaintext Loopback HTTP with Static Bearer Token
+**Date:** 2026-05-29 | **Status:** Decided
+**Rationale:** The Claude Gateway (subscription-priced CLI bridge) runs as a local process on `localhost:3131` on the same trusted host as the Functions worker. `ClaudeService` reaches it over plaintext HTTP, authenticating with a static `Bearer` token (`Claude:GatewayApiKey`). The question is whether this transport is acceptable or whether it needs TLS / a non-network IPC channel.
+**Decision:** Keep plaintext HTTP over loopback (`http://localhost:3131/`) with the static Bearer token. This is acceptable because the listener is bound to the loopback interface only — traffic never leaves the host, so there is no on-wire interception surface, and the Bearer token guards against other local processes that lack the secret. The named `ClaudeGateway` `HttpClient` is created via `IHttpClientFactory` with a short configurable timeout (`GatewayTimeoutSeconds`, default 8s) so a hung gateway fails fast to the metered direct API (which itself fails closed to deterministic rules when no key is present). This ADR DOCUMENTS the current stance only — it does NOT introduce TLS or named-pipe transport in this change.
+**Alternatives considered:**
+- *HTTPS with a self-signed certificate on loopback* — DEFERRED. Adds certificate generation, trust-store management, and rotation overhead for a channel that never leaves the host; no meaningful confidentiality gain over a loopback-bound socket. Revisit only if the gateway is ever moved off-box.
+- *Windows named pipe (or Unix domain socket) IPC* — DEFERRED. Removes the network surface entirely and is the strongest option, but requires a different client/transport abstraction in both the gateway and `ClaudeService`. Out of scope for this refactor; a candidate if a future threat model rules out any local TCP listener.
+- *No auth token (rely on loopback binding alone)* — REJECTED. Any local process could then call the subscription-priced gateway; the static Bearer token is a cheap defense-in-depth layer worth keeping.
+**Consequences:** Gateway base address and timeout are bound from the `Claude` config section, so the loopback URL and fail-fast timeout are tunable without code changes. If the gateway is ever relocated to another host, this ADR must be superseded — plaintext + static token is NOT acceptable off-loopback. The deferred TLS/named-pipe options remain explicitly un-built.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
