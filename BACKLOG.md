@@ -6,3 +6,4 @@
 
 | ID | Type | Title | Source | Added |
 |---|---|---|---|---|
+| B-001 | feature | Evaluate consuming the shared price/valuation service planned in the new 'acquisition-intelligence' repo (see its brief) — candidate shared price DB across trading + acquisition; dividend bot already shares core with this system | bots S4 scoping — cross-repo pointer | 2026-05-29 |
