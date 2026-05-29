@@ -18,4 +18,8 @@ public class ClaudeConfig
     public string Model { get; set; } = "claude-sonnet-4-20250514";
     public int MaxTokens { get; set; } = 2000;
     public double Temperature { get; set; } = 0.3;
+
+    // TTL (minutes) for the cached MarketRegime result in CachingMarketDataService. Within this
+    // window GetMarketRegimeAsync serves the cached regime and makes no Claude round-trip.
+    public int RegimeCacheMinutes { get; set; } = 20;
 }

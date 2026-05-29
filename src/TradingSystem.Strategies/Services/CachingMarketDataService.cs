@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TradingSystem.Core.Interfaces;
 using TradingSystem.Core.Models;
 
@@ -23,6 +24,13 @@ public class CachingMarketDataService : IMarketDataService
 
     private static readonly TimeSpan QuoteCacheDuration = TimeSpan.FromSeconds(60);
 
+    // Single-slot regime cache (GetMarketRegimeAsync takes no key). Mirrors the quote-cache style.
+    // The semaphore is a stampede guard: N concurrent callers serialize on it so at most one
+    // underlying computation (and at most one Claude round-trip) runs per TTL window.
+    private (MarketRegime Regime, DateTime CachedAt)? _regimeCache;
+    private readonly SemaphoreSlim _regimeLock = new(1, 1);
+    private readonly TimeSpan _regimeCacheDuration;
+
     // Safety bounds (NOT config) for the Claude-supplied RiskMultiplier. The clamp applies
     // ONLY to the AI regime-detection path; the rule-based regime multiplier table
     // (RiskOn=1.0 .. RiskOff=0.25 in GetMarketRegimeAsync) is intentionally left unchanged.
@@ -32,11 +40,13 @@ public class CachingMarketDataService : IMarketDataService
     public CachingMarketDataService(
         IBrokerService broker,
         ILogger<CachingMarketDataService> logger,
-        IClaudeService? claudeService = null)
+        IClaudeService? claudeService = null,
+        IOptions<ClaudeConfig>? claudeOptions = null)
     {
         _broker = broker;
         _logger = logger;
         _claudeService = claudeService;
+        _regimeCacheDuration = TimeSpan.FromMinutes(claudeOptions?.Value.RegimeCacheMinutes ?? 20);
     }
 
     public async Task<Quote> GetQuoteAsync(string symbol, CancellationToken ct = default)
@@ -69,6 +79,33 @@ public class CachingMarketDataService : IMarketDataService
     }
 
     public async Task<MarketRegime> GetMarketRegimeAsync(CancellationToken ct = default)
+    {
+        // Fast path: serve the cached regime if it is still within TTL (0 Claude calls).
+        if (_regimeCache is { } cached && DateTime.UtcNow - cached.CachedAt < _regimeCacheDuration)
+            return cached.Regime;
+
+        // Stampede guard: serialize concurrent callers so only one recomputes per TTL window.
+        await _regimeLock.WaitAsync(ct);
+        try
+        {
+            // Double-checked locking: a caller that queued behind the computation gets the fresh
+            // value here without triggering another (Claude-then-rules) computation.
+            if (_regimeCache is { } current && DateTime.UtcNow - current.CachedAt < _regimeCacheDuration)
+                return current.Regime;
+
+            var result = await ComputeMarketRegimeAsync(ct);
+            _regimeCache = (result, DateTime.UtcNow);
+            return result;
+        }
+        finally
+        {
+            _regimeLock.Release();
+        }
+    }
+
+    // Runs the existing Claude-then-rules detection. Both outcomes (Claude result AND rule
+    // fallback) are returned to the caller, which caches whichever is produced.
+    private async Task<MarketRegime> ComputeMarketRegimeAsync(CancellationToken ct)
     {
         var spyIndicators = await GetIndicatorsAsync("SPY", ct);
         var vixQuote = await GetQuoteAsync("VIX", ct);

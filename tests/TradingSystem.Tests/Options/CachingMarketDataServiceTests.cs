@@ -300,6 +300,197 @@ public class CachingMarketDataServiceTests
         VerifyWarningLogged(loggerMock, Times.Once());
     }
 
+    // === S2-001: Regime-result cache + stampede guard ===
+
+    // 1. Two calls inside the TTL => exactly one Claude round-trip; second is served from cache.
+    [Fact]
+    public async Task GetMarketRegimeAsync_WithinTtl_NoSecondClaudeCall()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock);
+        var claudeMock = CreateRegimeClaudeMock();
+        var service = CreateServiceWithTtl(brokerMock, claudeMock, regimeCacheMinutes: 20);
+
+        var first = await service.GetMarketRegimeAsync();
+        var second = await service.GetMarketRegimeAsync();
+
+        Assert.Equal(first.Regime, second.Regime);
+        Assert.Equal(first.RiskMultiplier, second.RiskMultiplier);
+        claudeMock.Verify(
+            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // 2. After TTL expiry (forced via reflection, mirroring the _quoteCache pattern) the second
+    //    call recomputes => exactly two Claude round-trips.
+    [Fact]
+    public async Task GetMarketRegimeAsync_AfterTtlExpiry_RefreshesExactlyOnce()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock);
+        var claudeMock = CreateRegimeClaudeMock();
+        var service = CreateServiceWithTtl(brokerMock, claudeMock, regimeCacheMinutes: 20);
+
+        await service.GetMarketRegimeAsync();
+
+        ExpireRegimeCache(service, TimeSpan.FromMinutes(-21));
+
+        await service.GetMarketRegimeAsync();
+
+        claudeMock.Verify(
+            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    // 3. Stampede guard: N concurrent callers share exactly one underlying computation while the
+    //    Claude call is in flight; all callers observe the same result.
+    [Fact]
+    public async Task GetMarketRegimeAsync_ConcurrentCallers_ShareOneUnderlyingCall()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock);
+
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var claudeMock = new Mock<IClaudeService>();
+        claudeMock
+            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await gate.Task; // block until the test releases all callers
+                return new CachingMarketDataService.ClaudeRegimeResponse
+                {
+                    Regime = "RiskOn",
+                    RiskMultiplier = 0.75,
+                    Rationale = "test",
+                    KeyFactors = new List<string> { "test" }
+                };
+            });
+
+        var service = CreateServiceWithTtl(brokerMock, claudeMock, regimeCacheMinutes: 20);
+
+        const int n = 10;
+        var tasks = Enumerable.Range(0, n)
+            .Select(_ => service.GetMarketRegimeAsync())
+            .ToArray();
+
+        gate.SetResult(true); // release all callers
+        var results = await Task.WhenAll(tasks);
+
+        claudeMock.Verify(
+            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        var first = results[0];
+        Assert.All(results, r =>
+        {
+            Assert.Equal(first.Regime, r.Regime);
+            Assert.Equal(first.RiskMultiplier, r.RiskMultiplier);
+        });
+    }
+
+    // 4. Rule-fallback path (no IClaudeService) is also cached: broker inputs fetched only once
+    //    across two calls.
+    [Fact]
+    public async Task GetMarketRegimeAsync_RuleFallbackResult_IsCached()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock);
+        var service = CreateServiceWithTtl(brokerMock, claudeMock: null, regimeCacheMinutes: 20);
+
+        var first = await service.GetMarketRegimeAsync();
+        var second = await service.GetMarketRegimeAsync();
+
+        Assert.Equal(first.Regime, second.Regime);
+        Assert.Equal(first.RiskMultiplier, second.RiskMultiplier);
+        brokerMock.Verify(
+            b => b.GetQuoteAsync("VIX", It.IsAny<CancellationToken>()),
+            Times.Once);
+        brokerMock.Verify(
+            b => b.GetHistoricalBarsAsync(
+                "SPY", BarTimeframe.Daily, It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // 5. Claude failure path: detection falls back to the rule regime, the fallback is cached, and
+    //    the second call does NOT retry Claude.
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudeFailure_CachesRuleFallback()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock); // VIX 18, SPY above MAs => rule path = RiskOn
+        var claudeMock = new Mock<IClaudeService>();
+        claudeMock
+            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("claude down"));
+
+        var service = CreateServiceWithTtl(brokerMock, claudeMock, regimeCacheMinutes: 20);
+
+        var first = await service.GetMarketRegimeAsync();
+        Assert.Equal(RegimeType.RiskOn, first.Regime); // rule fallback
+        Assert.NotEqual("claude", first.Source);
+
+        var second = await service.GetMarketRegimeAsync();
+        Assert.Equal(first.Regime, second.Regime);
+
+        // Claude attempted exactly once (first call); the cached fallback short-circuits the retry.
+        claudeMock.Verify(
+            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // Helper: a Claude mock that returns a fixed RiskOn regime (0.75 multiplier).
+    private static Mock<IClaudeService> CreateRegimeClaudeMock()
+    {
+        var claudeMock = new Mock<IClaudeService>();
+        claudeMock
+            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CachingMarketDataService.ClaudeRegimeResponse
+            {
+                Regime = "RiskOn",
+                RiskMultiplier = 0.75,
+                Rationale = "test",
+                KeyFactors = new List<string> { "test" }
+            });
+        return claudeMock;
+    }
+
+    // Helper: build a SUT with a configured RegimeCacheMinutes TTL. claudeMock null => rule path.
+    private static CachingMarketDataService CreateServiceWithTtl(
+        Mock<IBrokerService> brokerMock, Mock<IClaudeService>? claudeMock, int regimeCacheMinutes)
+    {
+        var options = Microsoft.Extensions.Options.Options.Create(
+            new ClaudeConfig { RegimeCacheMinutes = regimeCacheMinutes });
+        return new CachingMarketDataService(
+            brokerMock.Object,
+            NullLogger<CachingMarketDataService>.Instance,
+            claudeMock?.Object,
+            options);
+    }
+
+    // Helper: force the single-slot regime cache's CachedAt back by the given (negative) offset,
+    // mirroring the _quoteCache reflection pattern used in GetQuoteAsync_CacheExpires_HitsBrokerAgain.
+    private static void ExpireRegimeCache(CachingMarketDataService service, TimeSpan offset)
+    {
+        var field = typeof(CachingMarketDataService)
+            .GetField("_regimeCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var current = field.GetValue(service);
+        Assert.NotNull(current); // cache must be populated before expiry can be forced
+
+        var tupleType = current!.GetType();
+        var regime = (MarketRegime)tupleType.GetField("Item1")!.GetValue(current)!;
+        var cachedAt = (DateTime)tupleType.GetField("Item2")!.GetValue(current)!;
+
+        var newValue = Activator.CreateInstance(tupleType, regime, cachedAt.Add(offset));
+        field.SetValue(service, newValue);
+    }
+
     // Helper: build a SUT wired to a Claude mock that returns a regime with the given
     // RiskMultiplier, plus broker mocks for the SPY/VIX inputs. Returns the logger mock
     // so warn-on-clamp can be asserted.
