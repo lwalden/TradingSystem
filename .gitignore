@@ -36,6 +36,11 @@ config.local.*
 *.userosscache
 *.sln.docstates
 
+# Python (backtest tooling + tests)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # Build outputs
 bin/
 obj/

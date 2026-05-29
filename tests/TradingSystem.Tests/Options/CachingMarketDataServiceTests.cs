@@ -175,6 +175,115 @@ public class CachingMarketDataServiceTests
         Assert.NotNull(result["MSFT"].SMA20);
     }
 
+    // === S2-006(c): GetIndicatorsBulkAsync fans out concurrently ===
+
+    // The bulk call must issue per-symbol GetIndicatorsAsync calls in parallel (Task.WhenAll),
+    // not sequentially. We gate every per-symbol broker call on a shared TaskCompletionSource and
+    // track the peak observed concurrency; if the fan-out is sequential the peak stays at 1.
+    [Fact]
+    public async Task GetIndicatorsBulkAsync_IssuesConcurrentCalls()
+    {
+        var symbols = new[] { "AAPL", "MSFT", "GOOG" };
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var current = 0;
+        var peak = 0;
+        var lockObj = new object();
+        var allInFlight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        foreach (var sym in symbols)
+        {
+            var bars = CreatePriceBars(sym, 30, 100m);
+            _brokerMock.Setup(b => b.GetHistoricalBarsAsync(
+                    sym, BarTimeframe.Daily, It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+                .Returns(async () =>
+                {
+                    int now;
+                    lock (lockObj)
+                    {
+                        current++;
+                        now = current;
+                        if (now > peak) peak = now;
+                        if (now == symbols.Length) allInFlight.TrySetResult(true);
+                    }
+                    await gate.Task; // hold every call until the test confirms all are in flight
+                    lock (lockObj) { current--; }
+                    return bars;
+                });
+        }
+
+        var bulkTask = _service.GetIndicatorsBulkAsync(symbols);
+
+        // All per-symbol calls must be simultaneously in flight before we release the gate.
+        var reached = await Task.WhenAny(allInFlight.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        Assert.Same(allInFlight.Task, reached); // fails (and avoids a hang) if fan-out is sequential
+
+        gate.SetResult(true);
+        var result = await bulkTask;
+
+        Assert.Equal(symbols.Length, result.Count);
+        Assert.True(peak > 1, $"Expected concurrent fan-out (peak > 1) but observed peak {peak}");
+    }
+
+    // === S2-006(c): GetIndicatorsBulkAsync preserves per-symbol mapping ===
+
+    // Distinct bar sets per symbol must round-trip so result[sym].Symbol == sym for each input,
+    // even though the fan-out completes out of order.
+    [Fact]
+    public async Task GetIndicatorsBulkAsync_PreservesPerSymbolMapping()
+    {
+        var symbols = new[] { "AAPL", "MSFT", "GOOG" };
+        var basePrices = new Dictionary<string, decimal>
+        {
+            ["AAPL"] = 150m,
+            ["MSFT"] = 400m,
+            ["GOOG"] = 170m,
+        };
+
+        foreach (var sym in symbols)
+        {
+            var bars = CreatePriceBars(sym, 30, basePrices[sym]);
+            _brokerMock.Setup(b => b.GetHistoricalBarsAsync(
+                    sym, BarTimeframe.Daily, It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(bars);
+        }
+
+        var result = await _service.GetIndicatorsBulkAsync(symbols);
+
+        Assert.Equal(symbols.Length, result.Count);
+        foreach (var sym in symbols)
+        {
+            Assert.Equal(sym, result[sym].Symbol);
+            Assert.NotNull(result[sym].SMA20);
+        }
+    }
+
+    // === S2-006(b): SanitizeRationale strips control chars, collapses whitespace, truncates ===
+
+    [Fact]
+    public void SanitizeRationale_StripsControlChars_AndTruncates()
+    {
+        // null / empty / whitespace-only => "none"
+        Assert.Equal("none", CachingMarketDataService.SanitizeRationale(null));
+        Assert.Equal("none", CachingMarketDataService.SanitizeRationale(""));
+        Assert.Equal("none", CachingMarketDataService.SanitizeRationale("   "));
+
+        // control chars stripped, whitespace collapsed
+        var dirty = "line1\nline2\tcol\r\nmore   spaces";
+        var clean = CachingMarketDataService.SanitizeRationale(dirty);
+        Assert.DoesNotContain('\n', clean);
+        Assert.DoesNotContain('\r', clean);
+        Assert.DoesNotContain('\t', clean);
+        Assert.DoesNotContain("  ", clean); // no runs of multiple spaces
+        Assert.Equal("line1 line2 col more spaces", clean);
+
+        // long input is capped to ~500 chars (+1 ellipsis) with a truncation marker
+        var longInput = new string('x', 1000);
+        var truncated = CachingMarketDataService.SanitizeRationale(longInput);
+        Assert.True(truncated.Length <= 501, $"Expected length <= 501 but was {truncated.Length}");
+        Assert.EndsWith("…", truncated); // appended ellipsis on truncation
+    }
+
     // === DetermineRegime: high VIX (>35) -> RiskOff ===
 
     [Fact]

@@ -122,7 +122,7 @@ public class CachingMarketDataService : IMarketDataService
                     _logger.LogInformation(
                         "Claude regime: {Regime}, RiskMultiplier: {Mult}, Rationale: {Rationale}",
                         claudeRegime.Regime, claudeRegime.RiskMultiplier,
-                        claudeRegime.Rationale ?? "none");
+                        SanitizeRationale(claudeRegime.Rationale));
                     return claudeRegime;
                 }
             }
@@ -198,12 +198,59 @@ public class CachingMarketDataService : IMarketDataService
     public async Task<Dictionary<string, TechnicalIndicators>> GetIndicatorsBulkAsync(
         IEnumerable<string> symbols, CancellationToken ct = default)
     {
-        var result = new Dictionary<string, TechnicalIndicators>();
-        foreach (var symbol in symbols)
+        // Order-preserving concurrent fan-out. GetIndicatorsAsync caches per symbol via a
+        // ConcurrentDictionary, so issuing the per-symbol calls in parallel is concurrent-safe.
+        // De-dup defensively so a repeated symbol cannot produce a duplicate dictionary key.
+        var symbolList = symbols.Distinct().ToList();
+        var tasks = symbolList.Select(s => GetIndicatorsAsync(s, ct)).ToList();
+        var results = await Task.WhenAll(tasks);
+        return symbolList.Zip(results, (s, r) => (s, r)).ToDictionary(x => x.s, x => x.r);
+    }
+
+    // Sanitize an AI-supplied rationale for safe structured logging (App Insights): collapses
+    // whitespace, strips control characters (defends against log injection / forging via embedded
+    // newlines), and caps length so a runaway rationale cannot bloat a log record. The stored
+    // MarketRegime.Rationale model value is NEVER mutated — only the log projection is sanitized.
+    // internal (not private) so the existing InternalsVisibleTo("TradingSystem.Tests") can unit-test it.
+    internal static string SanitizeRationale(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "none";
+
+        const int MaxLen = 500;
+        var sb = new System.Text.StringBuilder(Math.Min(raw.Length, MaxLen) + 1);
+        var lastWasSpace = false;
+
+        foreach (var ch in raw)
         {
-            result[symbol] = await GetIndicatorsAsync(symbol, ct);
+            // Treat any control char (newline, tab, CR, etc.) or whitespace as a single space.
+            if (char.IsControl(ch) || char.IsWhiteSpace(ch))
+            {
+                if (!lastWasSpace && sb.Length > 0)
+                {
+                    sb.Append(' ');
+                    lastWasSpace = true;
+                }
+                continue;
+            }
+
+            sb.Append(ch);
+            lastWasSpace = false;
+
+            if (sb.Length >= MaxLen)
+                break;
         }
-        return result;
+
+        // Trim a trailing collapsed space, then mark truncation if we stopped early.
+        if (sb.Length > 0 && sb[^1] == ' ')
+            sb.Length--;
+
+        var truncated = sb.Length >= MaxLen;
+        var cleaned = sb.ToString();
+        if (cleaned.Length == 0)
+            return "none";
+
+        return truncated ? cleaned + "…" : cleaned;
     }
 
     private async Task<MarketRegime?> DetectRegimeWithClaudeAsync(
