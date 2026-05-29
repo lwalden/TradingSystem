@@ -23,6 +23,12 @@ public class CachingMarketDataService : IMarketDataService
 
     private static readonly TimeSpan QuoteCacheDuration = TimeSpan.FromSeconds(60);
 
+    // Safety bounds (NOT config) for the Claude-supplied RiskMultiplier. The clamp applies
+    // ONLY to the AI regime-detection path; the rule-based regime multiplier table
+    // (RiskOn=1.0 .. RiskOff=0.25 in GetMarketRegimeAsync) is intentionally left unchanged.
+    private const decimal MinRiskMultiplier = 0.5m;
+    private const decimal MaxRiskMultiplier = 1.0m;
+
     public CachingMarketDataService(
         IBrokerService broker,
         ILogger<CachingMarketDataService> logger,
@@ -212,6 +218,19 @@ Respond ONLY with valid JSON in this exact format:
             return null;
         }
 
+        // Bound the AI-supplied multiplier to [Min, Max] before it can influence position
+        // sizing. Absent values default to 1.0 (in range, no warn); out-of-range values
+        // clamp to the nearest bound and emit a Warning (fail-closed: never riskier).
+        // NOTE: this clamp applies ONLY to the AI path; the rule-based multiplier table is untouched.
+        var rawMultiplier = (decimal)(response.RiskMultiplier ?? 1.0);
+        var clampedMultiplier = Math.Clamp(rawMultiplier, MinRiskMultiplier, MaxRiskMultiplier);
+        if (clampedMultiplier != rawMultiplier)
+        {
+            _logger.LogWarning(
+                "Claude RiskMultiplier {Raw} out of bounds [{Min},{Max}]; clamped to {Clamped}",
+                rawMultiplier, MinRiskMultiplier, MaxRiskMultiplier, clampedMultiplier);
+        }
+
         return new MarketRegime
         {
             VIX = vixQuote.Last,
@@ -220,14 +239,16 @@ Respond ONLY with valid JSON in this exact format:
             SPY200DMA = spyIndicators.SMA200 ?? 0,
             SPYDistanceFrom50DMA = spyVs50dma,
             Regime = regime.Value,
-            RiskMultiplier = (decimal)(response.RiskMultiplier ?? 1.0),
+            RiskMultiplier = clampedMultiplier,
             Rationale = response.Rationale,
             Source = "claude",
             Timestamp = DateTime.UtcNow
         };
     }
 
-    private class ClaudeRegimeResponse
+    // Internal (not private) so unit tests can construct and mock AnalyzeAsync&lt;ClaudeRegimeResponse&gt;.
+    // The Strategies csproj exposes internals to TradingSystem.Tests via InternalsVisibleTo.
+    internal class ClaudeRegimeResponse
     {
         public string? Regime { get; set; }
         public double? RiskMultiplier { get; set; }

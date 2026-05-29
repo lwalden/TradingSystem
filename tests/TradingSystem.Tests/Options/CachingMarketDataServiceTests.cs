@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TradingSystem.Core.Interfaces;
@@ -225,6 +226,153 @@ public class CachingMarketDataServiceTests
         var regime = await _service.GetMarketRegimeAsync();
 
         Assert.Equal(RegimeType.RiskOff, regime.Regime);
+    }
+
+    // === AI RiskMultiplier clamping (S2-003) ===
+    // Claude-supplied RiskMultiplier must be bounded to [0.5, 1.0] before it reaches
+    // MarketRegime / MomentumBreakoutStrategy. The clamp applies ONLY to the AI path.
+
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudeMultiplierAboveMax_ClampsToOne()
+    {
+        var (service, _) = CreateServiceWithClaude(riskMultiplier: 2.0);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal("claude", regime.Source);
+        Assert.Equal(1.0m, regime.RiskMultiplier);
+    }
+
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudeMultiplierBelowMin_ClampsToHalf()
+    {
+        var (service, _) = CreateServiceWithClaude(riskMultiplier: -0.3);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal("claude", regime.Source);
+        Assert.Equal(0.5m, regime.RiskMultiplier);
+    }
+
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudeMultiplierZero_ClampsToHalf()
+    {
+        var (service, loggerMock) = CreateServiceWithClaude(riskMultiplier: 0.0);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal("claude", regime.Source);
+        Assert.Equal(0.5m, regime.RiskMultiplier);
+        VerifyWarningLogged(loggerMock, Times.Once());
+    }
+
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudeMultiplierNull_DefaultsToOne_NoWarn()
+    {
+        var (service, loggerMock) = CreateServiceWithClaude(riskMultiplier: null);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal("claude", regime.Source);
+        Assert.Equal(1.0m, regime.RiskMultiplier);
+        VerifyWarningLogged(loggerMock, Times.Never());
+    }
+
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudeMultiplierInRange_PassesThrough()
+    {
+        var (service, loggerMock) = CreateServiceWithClaude(riskMultiplier: 0.75);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal("claude", regime.Source);
+        Assert.Equal(0.75m, regime.RiskMultiplier);
+        VerifyWarningLogged(loggerMock, Times.Never());
+    }
+
+    [Fact]
+    public async Task GetMarketRegimeAsync_OutOfRange_EmitsWarning()
+    {
+        var (service, loggerMock) = CreateServiceWithClaude(riskMultiplier: 2.0);
+
+        await service.GetMarketRegimeAsync();
+
+        VerifyWarningLogged(loggerMock, Times.Once());
+    }
+
+    // Helper: build a SUT wired to a Claude mock that returns a regime with the given
+    // RiskMultiplier, plus broker mocks for the SPY/VIX inputs. Returns the logger mock
+    // so warn-on-clamp can be asserted.
+    private static (CachingMarketDataService Service, Mock<ILogger<CachingMarketDataService>> Logger)
+        CreateServiceWithClaude(double? riskMultiplier)
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock);
+
+        var claudeMock = new Mock<IClaudeService>();
+        claudeMock
+            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+                It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CachingMarketDataService.ClaudeRegimeResponse
+            {
+                Regime = "RiskOn",
+                RiskMultiplier = riskMultiplier,
+                Rationale = "test",
+                KeyFactors = new List<string> { "test" }
+            });
+
+        var loggerMock = new Mock<ILogger<CachingMarketDataService>>();
+        var service = new CachingMarketDataService(brokerMock.Object, loggerMock.Object, claudeMock.Object);
+        return (service, loggerMock);
+    }
+
+    // Helper: assert ILogger.LogWarning was invoked the expected number of times.
+    private static void VerifyWarningLogged(Mock<ILogger<CachingMarketDataService>> loggerMock, Times times)
+    {
+        loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            times);
+    }
+
+    // Helper: broker mocks for the SPY indicators + VIX quote consumed by GetMarketRegimeAsync.
+    // Inputs are benign (low VIX, SPY above MAs) so the rule-path fallback is never exercised;
+    // these tests only assert on the AI-supplied (clamped) multiplier.
+    private static void SetupRegimeInputMocks(Mock<IBrokerService> brokerMock)
+    {
+        var vixQuote = new Quote { Symbol = "VIX", Last = 18m };
+        brokerMock.Setup(b => b.GetQuoteAsync("VIX", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(vixQuote);
+
+        var bars = new List<PriceBar>();
+        const decimal smaTarget = 450m;
+        for (int i = 0; i < 250; i++)
+        {
+            bars.Add(new PriceBar
+            {
+                Symbol = "SPY",
+                Timestamp = DateTime.UtcNow.AddDays(-250 + i),
+                Open = smaTarget,
+                High = smaTarget + 1m,
+                Low = smaTarget - 1m,
+                Close = smaTarget,
+                Volume = 50_000_000L
+            });
+        }
+        for (int i = 240; i < 250; i++)
+        {
+            bars[i].Close = smaTarget + 20m;
+            bars[i].High = smaTarget + 21m;
+            bars[i].Open = smaTarget + 19m;
+        }
+
+        brokerMock.Setup(b => b.GetHistoricalBarsAsync(
+                "SPY", BarTimeframe.Daily, It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(bars);
     }
 
     // Helper: create a list of price bars with a gentle uptrend
