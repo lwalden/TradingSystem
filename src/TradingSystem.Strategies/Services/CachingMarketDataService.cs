@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
 using TradingSystem.Core.Models;
 
@@ -78,14 +79,14 @@ public class CachingMarketDataService : IMarketDataService
         return indicators;
     }
 
-    public async Task<MarketRegime> GetMarketRegimeAsync(CancellationToken ct = default)
+    public async Task<MarketRegime> GetMarketRegimeAsync(CancellationToken cancellationToken = default)
     {
         // Fast path: serve the cached regime if it is still within TTL (0 Claude calls).
         if (_regimeCache is { } cached && DateTime.UtcNow - cached.CachedAt < _regimeCacheDuration)
             return cached.Regime;
 
         // Stampede guard: serialize concurrent callers so only one recomputes per TTL window.
-        await _regimeLock.WaitAsync(ct);
+        await _regimeLock.WaitAsync(cancellationToken);
         try
         {
             // Double-checked locking: a caller that queued behind the computation gets the fresh
@@ -93,7 +94,7 @@ public class CachingMarketDataService : IMarketDataService
             if (_regimeCache is { } current && DateTime.UtcNow - current.CachedAt < _regimeCacheDuration)
                 return current.Regime;
 
-            var result = await ComputeMarketRegimeAsync(ct);
+            var result = await ComputeMarketRegimeAsync(cancellationToken);
             _regimeCache = (result, DateTime.UtcNow);
             return result;
         }
@@ -105,17 +106,17 @@ public class CachingMarketDataService : IMarketDataService
 
     // Runs the existing Claude-then-rules detection. Both outcomes (Claude result AND rule
     // fallback) are returned to the caller, which caches whichever is produced.
-    private async Task<MarketRegime> ComputeMarketRegimeAsync(CancellationToken ct)
+    private async Task<MarketRegime> ComputeMarketRegimeAsync(CancellationToken cancellationToken)
     {
-        var spyIndicators = await GetIndicatorsAsync("SPY", ct);
-        var vixQuote = await GetQuoteAsync("VIX", ct);
+        var spyIndicators = await GetIndicatorsAsync("SPY", cancellationToken);
+        var vixQuote = await GetQuoteAsync("VIX", cancellationToken);
 
         // Try Claude-enhanced regime detection if available
         if (_claudeService != null)
         {
             try
             {
-                var claudeRegime = await DetectRegimeWithClaudeAsync(vixQuote, spyIndicators, ct);
+                var claudeRegime = await DetectRegimeWithClaudeAsync(vixQuote, spyIndicators, cancellationToken);
                 if (claudeRegime != null)
                 {
                     _logger.LogInformation(
@@ -206,7 +207,7 @@ public class CachingMarketDataService : IMarketDataService
     }
 
     private async Task<MarketRegime?> DetectRegimeWithClaudeAsync(
-        Quote vixQuote, TechnicalIndicators spyIndicators, CancellationToken ct)
+        Quote vixQuote, TechnicalIndicators spyIndicators, CancellationToken cancellationToken)
     {
         var spyVs50dma = spyIndicators.DistanceFrom50DMA ?? 0m;
         var spyVs200dma = spyIndicators.SMA200.HasValue && spyIndicators.SMA200.Value > 0
@@ -238,7 +239,7 @@ Respond ONLY with valid JSON in this exact format:
             MaxTokens = 500
         };
 
-        var response = await _claudeService!.AnalyzeAsync<ClaudeRegimeResponse>(request, ct);
+        var response = await _claudeService!.AnalyzeAsync<ClaudeRegimeResponse>(request, cancellationToken);
 
         var regime = response.Regime?.ToLowerInvariant() switch
         {
@@ -278,7 +279,7 @@ Respond ONLY with valid JSON in this exact format:
             Regime = regime.Value,
             RiskMultiplier = clampedMultiplier,
             Rationale = response.Rationale,
-            Source = "claude",
+            Source = RegimeSource.Claude,
             Timestamp = DateTime.UtcNow
         };
     }

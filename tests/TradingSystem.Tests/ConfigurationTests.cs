@@ -1,5 +1,4 @@
 using TradingSystem.Core.Configuration;
-using TradingSystem.Core.Interfaces;
 using TradingSystem.Core.Models;
 using Xunit;
 

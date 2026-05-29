@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
 using TradingSystem.Core.Models;
 using TradingSystem.Strategies.Services;
@@ -239,7 +240,7 @@ public class CachingMarketDataServiceTests
 
         var regime = await service.GetMarketRegimeAsync();
 
-        Assert.Equal("claude", regime.Source);
+        Assert.Equal(RegimeSource.Claude, regime.Source);
         Assert.Equal(1.0m, regime.RiskMultiplier);
     }
 
@@ -250,7 +251,7 @@ public class CachingMarketDataServiceTests
 
         var regime = await service.GetMarketRegimeAsync();
 
-        Assert.Equal("claude", regime.Source);
+        Assert.Equal(RegimeSource.Claude, regime.Source);
         Assert.Equal(0.5m, regime.RiskMultiplier);
     }
 
@@ -261,7 +262,7 @@ public class CachingMarketDataServiceTests
 
         var regime = await service.GetMarketRegimeAsync();
 
-        Assert.Equal("claude", regime.Source);
+        Assert.Equal(RegimeSource.Claude, regime.Source);
         Assert.Equal(0.5m, regime.RiskMultiplier);
         VerifyWarningLogged(loggerMock, Times.Once());
     }
@@ -273,7 +274,7 @@ public class CachingMarketDataServiceTests
 
         var regime = await service.GetMarketRegimeAsync();
 
-        Assert.Equal("claude", regime.Source);
+        Assert.Equal(RegimeSource.Claude, regime.Source);
         Assert.Equal(1.0m, regime.RiskMultiplier);
         VerifyWarningLogged(loggerMock, Times.Never());
     }
@@ -285,7 +286,7 @@ public class CachingMarketDataServiceTests
 
         var regime = await service.GetMarketRegimeAsync();
 
-        Assert.Equal("claude", regime.Source);
+        Assert.Equal(RegimeSource.Claude, regime.Source);
         Assert.Equal(0.75m, regime.RiskMultiplier);
         VerifyWarningLogged(loggerMock, Times.Never());
     }
@@ -432,7 +433,7 @@ public class CachingMarketDataServiceTests
 
         var first = await service.GetMarketRegimeAsync();
         Assert.Equal(RegimeType.RiskOn, first.Regime); // rule fallback
-        Assert.NotEqual("claude", first.Source);
+        Assert.NotEqual(RegimeSource.Claude, first.Source);
 
         var second = await service.GetMarketRegimeAsync();
         Assert.Equal(first.Regime, second.Regime);
@@ -442,6 +443,39 @@ public class CachingMarketDataServiceTests
             c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    // === S2-005: RegimeSource provenance (string -> enum) ===
+
+    // A freshly-constructed regime defaults to the rule-based source.
+    [Fact]
+    public void MarketRegime_DefaultSource_IsRules()
+    {
+        Assert.Equal(RegimeSource.Rules, new MarketRegime().Source);
+    }
+
+    // The Claude detection path stamps Source = Claude.
+    [Fact]
+    public async Task GetMarketRegimeAsync_ClaudePath_SetsSourceClaude()
+    {
+        var (service, _) = CreateServiceWithClaude(riskMultiplier: 0.75);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal(RegimeSource.Claude, regime.Source);
+    }
+
+    // The rule-based fallback path (no IClaudeService) leaves Source at its default (Rules).
+    [Fact]
+    public async Task GetMarketRegimeAsync_RulePath_SourceRemainsRules()
+    {
+        var brokerMock = new Mock<IBrokerService>();
+        SetupRegimeInputMocks(brokerMock);
+        var service = CreateServiceWithTtl(brokerMock, claudeMock: null, regimeCacheMinutes: 20);
+
+        var regime = await service.GetMarketRegimeAsync();
+
+        Assert.Equal(RegimeSource.Rules, regime.Source);
     }
 
     // Helper: a Claude mock that returns a fixed RiskOn regime (0.75 multiplier).
