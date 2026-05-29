@@ -1,0 +1,5 @@
+# Dev/test dependencies for backtest pipeline tools.
+# Install: pip install -r tools/backtest/requirements-dev.txt
+# Run tests: pytest tools/backtest/tests/ -q
+-r requirements.txt
+pytest>=8.0

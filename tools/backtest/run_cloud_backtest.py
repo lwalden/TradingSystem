@@ -56,6 +56,7 @@ QC_API_BASE        = "https://www.quantconnect.com/api/v2"
 POLL_INTERVAL_S    = 30
 COMPILE_TIMEOUT_S  = 180
 BACKTEST_TIMEOUT_S = 5400  # 90 min ceiling; minute-resolution runs take ~60 min
+MAX_LOG_PAGES      = 50    # hard cap on read_log pagination (200 lines/page => 10k lines)
 
 
 # ---------------------------------------------------------------------------
@@ -315,9 +316,38 @@ class QCClient:
                 logs = "\n".join(status.get("logs", []))
                 raise RuntimeError(f"Compilation failed ({state}):\n{logs}")
             if time.monotonic() > deadline:
+                # No backtest job has been created at the compile stage, so there is no
+                # paid backtest node to tear down here, and QC exposes no documented
+                # compile cancel/stop endpoint. The job is abandoned client-side; the
+                # cloud-side compile finishes or expires on its own. Surface the timeout.
                 raise TimeoutError("Compilation timed out")
 
     # Backtest -------------------------------------------------------------
+
+    def abort_backtest(self, backtest_id: str) -> None:
+        """Best-effort cancellation of a running/queued cloud backtest.
+
+        QuantConnect's v2 API exposes no documented stop/cancel/abort endpoint
+        for backtests (verified against
+        https://www.quantconnect.com/docs/v2/cloud-platform/api-reference —
+        only create/read/update/delete/list/tags exist). We therefore use the
+        documented `backtests/delete` endpoint (projectId + backtestId) as the
+        fallback to tear down the job so no orphaned paid node keeps running.
+
+        This is best-effort: any failure is logged as a warning and swallowed so
+        it can NEVER mask the original TimeoutError that triggered the abort.
+        """
+        try:
+            self._post("backtests/delete", {
+                "projectId":  self.project_id,
+                "backtestId": backtest_id,
+            })
+            print(f"  Aborted cloud backtest {backtest_id} (backtests/delete).", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 — best-effort cleanup, must not propagate
+            print(
+                f"  WARNING: failed to abort cloud backtest {backtest_id}: {exc}",
+                file=sys.stderr,
+            )
 
     def create_backtest(self, compile_id: str, name: str) -> str:
         """Create a backtest and return backtestId."""
@@ -353,6 +383,10 @@ class QCClient:
                 print()  # newline
                 return bt
             if time.monotonic() > deadline:
+                # Tear down the orphaned (paid) cloud job before surfacing the timeout.
+                # abort_backtest is best-effort and never raises, so the TimeoutError
+                # below always reaches the caller.
+                self.abort_backtest(backtest_id)
                 raise TimeoutError(f"Backtest polling timed out after {BACKTEST_TIMEOUT_S // 60} minutes")
 
     def read_log(self, backtest_id: str) -> list[str]:
@@ -377,10 +411,28 @@ class QCClient:
         except Exception:
             return lines
 
-        # Page through all lines
+        # Page through all lines, bounded by MAX_LOG_PAGES so a runaway/huge
+        # `total` (or a misbehaving cursor) can never loop unbounded.
         offset = 0
+        pages = 0
         while offset < total:
+            if pages >= MAX_LOG_PAGES:
+                print(
+                    f"  WARNING: read_log hit the MAX_LOG_PAGES ({MAX_LOG_PAGES}) "
+                    f"cap at offset {offset}/{total}; log truncated.",
+                    file=sys.stderr,
+                )
+                break
             end = min(offset + PAGE, total)
+            # Guard against a non-advancing cursor: if the window cannot move
+            # forward (end <= offset) we would spin forever — bail out instead.
+            if end <= offset:
+                print(
+                    f"  WARNING: read_log cursor did not advance (offset={offset}, "
+                    f"end={end}); stopping pagination.",
+                    file=sys.stderr,
+                )
+                break
             try:
                 body = self._post("backtests/read/log", {
                     "projectId":  self.project_id,
@@ -396,6 +448,7 @@ class QCClient:
                 chunk = [chunk]
             lines.extend(chunk)
             offset = end
+            pages += 1
         return lines
 
     def close(self) -> None:
