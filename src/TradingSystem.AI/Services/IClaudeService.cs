@@ -1,3 +1,3 @@
-// Interface moved to TradingSystem.Core.Interfaces.IClaudeService
-// This file kept for backwards compatibility — just re-exports.
+// Brings the Core IClaudeService into scope for AI-layer files via a global using;
+// the interface lives in TradingSystem.Core.Interfaces.
 global using TradingSystem.Core.Interfaces;

@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using TradingSystem.AI.Services;
+using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
 using Xunit;
 

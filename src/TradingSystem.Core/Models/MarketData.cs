@@ -161,7 +161,7 @@ public class MarketRegime
     public RegimeType Regime { get; set; }
     public decimal RiskMultiplier { get; set; } = 1.0m; // 1.0 = normal, 0.5 = reduced
     public string? Rationale { get; set; }
-    public string Source { get; set; } = "rules"; // "rules" or "claude"
+    public RegimeSource Source { get; set; } = RegimeSource.Rules;
 }
 
 public enum RegimeType
@@ -170,6 +170,15 @@ public enum RegimeType
     Cautious,   // Elevated VIX or market stress, reduce new positions
     RiskOff,    // High stress, defensive mode only
     Recovery    // Coming out of stress, gradually increase
+}
+
+/// <summary>
+/// Provenance of a <see cref="MarketRegime"/>: rule-based (default) or Claude AI detection.
+/// </summary>
+public enum RegimeSource
+{
+    Rules,
+    Claude
 }
 
 /// <summary>

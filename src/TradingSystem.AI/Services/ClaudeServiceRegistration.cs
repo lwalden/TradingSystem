@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
 
 namespace TradingSystem.AI.Services;
