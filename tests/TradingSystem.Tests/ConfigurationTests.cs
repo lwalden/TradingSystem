@@ -1,4 +1,5 @@
 using TradingSystem.Core.Configuration;
+using TradingSystem.Core.Interfaces;
 using TradingSystem.Core.Models;
 using Xunit;
 
@@ -28,10 +29,18 @@ public class ConfigurationTests
     public void RiskConfig_HasSaneDefaults()
     {
         var config = new RiskConfig();
-        
+
         Assert.True(config.RiskPerTradePercent <= 0.01m); // Max 1% per trade
         Assert.True(config.DailyStopPercent <= 0.05m); // Max 5% daily
         Assert.True(config.MaxGrossLeverage <= 2.0m); // Max 2x leverage
+    }
+
+    [Fact]
+    public void ClaudeConfig_RegimeCacheMinutes_DefaultsTo20()
+    {
+        var config = new ClaudeConfig();
+
+        Assert.Equal(20, config.RegimeCacheMinutes);
     }
 }
 
