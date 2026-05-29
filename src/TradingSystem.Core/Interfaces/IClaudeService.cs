@@ -27,4 +27,11 @@ public class ClaudeConfig
     // and this many direct calls have already been made today, ClaudeService refuses further
     // metered calls and fails closed (returns no content) so callers fall back to rules.
     public int MaxDirectApiCallsPerDay { get; set; } = 50;
+
+    // Base address of the local Claude Gateway (loopback-only, plaintext HTTP — see ADR-029).
+    public string GatewayBaseUrl { get; set; } = "http://localhost:3131/";
+
+    // Per-request timeout (seconds) for the gateway leg. Deliberately short so a hung/slow
+    // gateway falls back fast to the direct API rather than blocking the regime path.
+    public int GatewayTimeoutSeconds { get; set; } = 8;
 }

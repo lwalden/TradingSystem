@@ -13,9 +13,13 @@ namespace TradingSystem.AI.Services;
 /// </summary>
 public class ClaudeService : IClaudeService
 {
+    // Named client key for the gateway leg, registered via AddHttpClient("ClaudeGateway", ...).
+    public const string GatewayClientName = "ClaudeGateway";
+
     private readonly ILogger<ClaudeService> _logger;
     private readonly ClaudeConfig _config;
     private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpFactory;
 
     // Daily soft cap on metered direct-API calls. Instance state guarded by _counterLock;
     // it resets on a new UTC day AND on process restart. A restart-resetting counter is an
@@ -25,21 +29,16 @@ public class ClaudeService : IClaudeService
     private int _directCallsToday;
     private DateOnly _counterDate = DateOnly.FromDateTime(DateTime.UtcNow);
 
-    // Gateway is a separate HTTP target — build its client once
-    private static readonly HttpClient _gatewayClient = new()
-    {
-        BaseAddress = new Uri("http://localhost:3131/"),
-        Timeout = TimeSpan.FromSeconds(60)
-    };
-
     public ClaudeService(
         ILogger<ClaudeService> logger,
         IOptions<ClaudeConfig> config,
-        HttpClient httpClient)
+        HttpClient httpClient,
+        IHttpClientFactory httpFactory)
     {
         _logger = logger;
         _config = config.Value;
         _httpClient = httpClient;
+        _httpFactory = httpFactory;
 
         _httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
         _httpClient.DefaultRequestHeaders.Add("x-api-key", _config.ApiKey);
@@ -160,7 +159,11 @@ public class ClaudeService : IClaudeService
             };
             gatewayRequest.Headers.Add("Authorization", $"Bearer {_config.GatewayApiKey}");
 
-            var response = await _gatewayClient.SendAsync(gatewayRequest, cancellationToken);
+            // Resolve the named gateway client from the factory. Base address and the short
+            // gateway timeout are configured on the named registration (see ClaudeServiceRegistration),
+            // keeping the direct typed-client's 60s timeout independent.
+            var gatewayClient = _httpFactory.CreateClient(GatewayClientName);
+            var response = await gatewayClient.SendAsync(gatewayRequest, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {

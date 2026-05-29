@@ -80,14 +80,10 @@ var host = new HostBuilder()
         services.AddSingleton<OptionsPositionSizer>();
         services.AddSingleton<OptionsSleeveManager>();
         
-        // AI Service — Claude regime detection with rule-based fallback (ADR-003, ADR-012)
-        services.Configure<ClaudeConfig>(
-            context.Configuration.GetSection("Claude"));
-        var claudeKey = context.Configuration["Claude:ApiKey"];
-        if (!string.IsNullOrEmpty(claudeKey))
-        {
-            services.AddHttpClient<IClaudeService, ClaudeService>();
-        }
+        // AI Service — Claude regime detection with rule-based fallback (ADR-003, ADR-012).
+        // Registration (config bind + gated client wiring, incl. the named ClaudeGateway client)
+        // is centralized in ClaudeServiceRegistration so it is unit-testable (S2-004, ADR-029).
+        ClaudeServiceRegistration.Add(services, context.Configuration);
         
         // Logging
         services.AddLogging(builder =>
