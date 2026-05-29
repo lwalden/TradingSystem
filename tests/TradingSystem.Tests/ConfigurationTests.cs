@@ -42,6 +42,14 @@ public class ConfigurationTests
 
         Assert.Equal(20, config.RegimeCacheMinutes);
     }
+
+    [Fact]
+    public void MaxDirectApiCallsPerDay_DefaultsTo50()
+    {
+        var config = new ClaudeConfig();
+
+        Assert.Equal(50, config.MaxDirectApiCallsPerDay);
+    }
 }
 
 public class PositionSizingTests

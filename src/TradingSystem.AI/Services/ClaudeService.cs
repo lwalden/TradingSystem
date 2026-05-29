@@ -17,6 +17,14 @@ public class ClaudeService : IClaudeService
     private readonly ClaudeConfig _config;
     private readonly HttpClient _httpClient;
 
+    // Daily soft cap on metered direct-API calls. Instance state guarded by _counterLock;
+    // it resets on a new UTC day AND on process restart. A restart-resetting counter is an
+    // acceptable trade-off for a daily soft cap — the worst case is one extra day's worth of
+    // budget after a redeploy, which fails toward availability, not toward overspend within a day.
+    private readonly object _counterLock = new();
+    private int _directCallsToday;
+    private DateOnly _counterDate = DateOnly.FromDateTime(DateTime.UtcNow);
+
     // Gateway is a separate HTTP target — build its client once
     private static readonly HttpClient _gatewayClient = new()
     {
@@ -36,6 +44,19 @@ public class ClaudeService : IClaudeService
         _httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
         _httpClient.DefaultRequestHeaders.Add("x-api-key", _config.ApiKey);
         _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+
+        // Surface the active pricing path at startup so the cost posture is visible in logs.
+        if (string.IsNullOrEmpty(_config.GatewayApiKey))
+        {
+            _logger.LogWarning(
+                "Claude gateway key not set; ALL calls will use the metered direct API");
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Claude pricing path: gateway-first (subscription), metered fallback capped at {Max}/day",
+                _config.MaxDirectApiCallsPerDay);
+        }
     }
 
     public async Task<string> AnalyzeAsync(AIAnalysisRequest request,
@@ -49,9 +70,53 @@ public class ClaudeService : IClaudeService
         if (gatewayResult != null)
             return gatewayResult;
 
-        // Fall back to direct Anthropic API
-        _logger.LogInformation("Gateway unavailable, falling back to direct API");
+        // Gateway unavailable — the only remaining path is the metered direct API.
+        // Enforce the daily cap (fail closed) before issuing any metered call.
+        if (!TryReserveDirectCall(out var count, out var max))
+        {
+            // Cap reached: do NOT call Anthropic. Returning no content makes the generic
+            // AnalyzeAsync<T> deserialize path fail into the caller's existing try/catch,
+            // so the regime path falls back to deterministic rules. Mirrors the gateway-miss seam.
+            _logger.LogWarning(
+                "Daily metered-API cap {Max} reached; refusing direct call, falling back to rules",
+                max);
+            return string.Empty;
+        }
+
+        _logger.LogWarning(
+            "Claude gateway unavailable; falling back to METERED direct API. DirectCallsToday={Count}/{Max}",
+            count, max);
         return await CallAnthropicApiAsync(request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reserve a slot for one metered direct call against the daily cap. Resets the counter on a
+    /// new UTC day. Returns true and increments <see cref="_directCallsToday"/> when a call is
+    /// permitted (the increment happens ONLY here, i.e. only when a direct call is actually about
+    /// to be issued — never on gateway success). Returns false when the cap is already reached.
+    /// </summary>
+    private bool TryReserveDirectCall(out int countAfterReserve, out int max)
+    {
+        max = _config.MaxDirectApiCallsPerDay;
+        lock (_counterLock)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            if (today != _counterDate)
+            {
+                _counterDate = today;
+                _directCallsToday = 0;
+            }
+
+            if (_directCallsToday >= max)
+            {
+                countAfterReserve = _directCallsToday;
+                return false;
+            }
+
+            _directCallsToday++;
+            countAfterReserve = _directCallsToday;
+            return true;
+        }
     }
 
     public async Task<T> AnalyzeAsync<T>(AIAnalysisRequest request,

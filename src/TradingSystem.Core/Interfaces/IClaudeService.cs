@@ -22,4 +22,9 @@ public class ClaudeConfig
     // TTL (minutes) for the cached MarketRegime result in CachingMarketDataService. Within this
     // window GetMarketRegimeAsync serves the cached regime and makes no Claude round-trip.
     public int RegimeCacheMinutes { get; set; } = 20;
+
+    // Daily soft cap on metered direct-API (per-token) calls. When the gateway is unavailable
+    // and this many direct calls have already been made today, ClaudeService refuses further
+    // metered calls and fails closed (returns no content) so callers fall back to rules.
+    public int MaxDirectApiCallsPerDay { get; set; } = 50;
 }
