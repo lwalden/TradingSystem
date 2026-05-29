@@ -12,6 +12,7 @@ using TradingSystem.MarketData.Polygon;
 using TradingSystem.MarketData.Polygon.Services;
 using TradingSystem.Storage;
 using TradingSystem.Storage.Repositories;
+using TradingSystem.AI.Services;
 using TradingSystem.Strategies.Options;
 using TradingSystem.Strategies.Services;
 
@@ -79,9 +80,14 @@ var host = new HostBuilder()
         services.AddSingleton<OptionsPositionSizer>();
         services.AddSingleton<OptionsSleeveManager>();
         
-        // AI Service
-        // TODO: Register Claude service
-        // services.AddSingleton<IClaudeService, ClaudeService>();
+        // AI Service — Claude regime detection with rule-based fallback (ADR-003, ADR-012)
+        services.Configure<ClaudeConfig>(
+            context.Configuration.GetSection("Claude"));
+        var claudeKey = context.Configuration["Claude:ApiKey"];
+        if (!string.IsNullOrEmpty(claudeKey))
+        {
+            services.AddHttpClient<IClaudeService, ClaudeService>();
+        }
         
         // Logging
         services.AddLogging(builder =>

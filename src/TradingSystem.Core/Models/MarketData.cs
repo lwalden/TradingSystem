@@ -160,6 +160,8 @@ public class MarketRegime
     // Calculated regime
     public RegimeType Regime { get; set; }
     public decimal RiskMultiplier { get; set; } = 1.0m; // 1.0 = normal, 0.5 = reduced
+    public string? Rationale { get; set; }
+    public string Source { get; set; } = "rules"; // "rules" or "claude"
 }
 
 public enum RegimeType

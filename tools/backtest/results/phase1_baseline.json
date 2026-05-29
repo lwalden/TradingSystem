@@ -1,0 +1,13 @@
+{
+  "parameter_hash": "spx-iron-condor-v1",
+  "sharpe": 0.0,
+  "date_range_start": null,
+  "date_range_end": null,
+  "cagr_net": null,
+  "in_sample_cagr": null,
+  "oos_cagr": null,
+  "max_drawdown": null,
+  "win_rate": null,
+  "profit_factor": null,
+  "slippage_drag_pct": null
+}

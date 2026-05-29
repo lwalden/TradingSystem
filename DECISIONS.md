@@ -189,15 +189,35 @@
 
 ---
 
+### ADR-026: Consolidate OptiTrade into TradingSystem
+**Date:** 2026-04-07 | **Status:** Decided | **Rationale:** OptiTrade (Python options backtest system) and TradingSystem (C#/.NET 8 two-sleeve platform) overlap in scope but TradingSystem is far more mature (418+ tests, working IBKR/risk/options/income infrastructure vs 5-file Python scaffold). Maintaining two repos doubles effort for no benefit. OptiTrade's backtest pipeline (Python scripts driving QC REST API) is the only asset worth preserving.
+**Decision:** TradingSystem is the primary repo. OptiTrade is archived (tagged `v1.0-archive`). Backtest pipeline migrated to `tools/backtest/`. Iron condor findings inform options sleeve parameters. SPX backtesting is the next critical path.
+**Consequences:** All future trading work in this repo. Python tooling lives in `tools/backtest/` with its own `requirements.txt`. The backtest pipeline is a developer tool, not part of the .NET runtime.
+
+---
+
+### ADR-027: Dual-Mode Strategy — Alpha-Seeking vs Income+Protection
+**Date:** 2026-04-07 | **Status:** Decided | **Rationale:** User's goals differ by life phase. While working full-time (next ~5 years), primary goal is generating alpha (beating S&P 500). In retirement, goal shifts to 5-8% consistent yield with drawdown protection. System should support both modes via configurable profiles.
+**Decision:** Build Mode A (alpha-seeking) first. Options sleeve is the primary alpha engine, not a supplement. SPX options (commission-efficient) are the focus. Income sleeve is secondary while working. The 70/30 income/options split from the original design may invert to 30/70 or 50/50 for Mode A. Mode B (income+protection) can reuse the same infrastructure with different allocation weights.
+**Consequences:** Options sleeve priority increases. SPX iron condor backtest is the immediate next step. Sleeve allocation weights become configurable. Return targets recalibrated: alpha-seeking benchmarked against SPY, not absolute yield targets.
+
+---
+
+### ADR-028: Iron Condor Backtest Findings — SPY Parameters and Limitations
+**Date:** 2026-04-07 | **Status:** Decided | **Rationale:** 8 OptiTrade backtests (2019-2025) proved SPY iron condors produce +0.07% CAGR on $400K — essentially breakeven. The edge is real (PF 2.0, 72% win rate) but commission drag ($2.60/spread vs $1.86-2.40 credit) consumes it. SPX (100x multiplier) should eliminate this drag.
+**Decision:** SPY iron condor parameters locked: IV>=18% ATM, PT=70%, MinCredit=$2.00, SL=2.0x, Wing=10pt, Delta=0.16. These are reference parameters for the options sleeve. SPX iron condor backtest is the highest priority — same logic, 10x better commission-to-credit ratio. If SPX passes gate with meaningful CAGR, iron condors become a core strategy. If not, iron condors are demoted to minor/inactive.
+**Consequences:** SPX backtest determines whether iron condors are worth running in production. `tools/backtest/algorithms/IronCondorBaseline.cs` preserves the validated SPY algorithm. Pipeline in `tools/backtest/` is ready for SPX variant.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
 **Blocking:** Options roll/close timing | **Needs:** Paper trading results from Phase 1
 Start with daily batch, assess need for intraday monitoring (especially near-expiry positions). Deferred to post-Phase 1.
 
-### PDR-002: Backtesting Engine Scope
-**Blocking:** Strategy optimization | **Needs:** Decision on simple/medium/full scope
-Defer until post-live planning.
+### PDR-002: ~~Backtesting Engine Scope~~ RESOLVED
+**Resolution:** ADR-026 — use OptiTrade's QuantConnect cloud pipeline (migrated to `tools/backtest/`). No custom backtesting engine needed. QC REST API automates compile/run/collect. Python scripts drive it.
 
 ### PDR-003: Swing Trade Third Sleeve
 **Blocking:** Nothing (independent) | **Needs:** Options sleeve proven in live trading
@@ -213,22 +233,34 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 
 ---
 
-## Project State Snapshot | 2026-02-16 | Migrated from PROGRESS.md
+## Project State Snapshot | 2026-04-07 | Post-Consolidation
 
-**Phase:** 1 — Foundation (Week 9 complete, 418 tests passing)
+**Phase:** 1 — Foundation (Week 9 complete, 418 tests passing). OptiTrade consolidated.
+
+### Unified Phase Structure
+
+| Phase | Weeks | Status | Goal |
+|---|---|---|---|
+| 1. Foundation | 1-10 | Week 9 done, Week 10 pending | IBKR, sleeves, risk, orchestration, Claude regime |
+| 2. Integration + SPX Backtests | 11-16 | Pending | Migrate backtest pipeline (done), SPX backtests, strategy lockdown |
+| 3. Paper Validation | 17-28 | Pending | 12+ weeks autonomous paper trading |
+| 4. Live Transition | 29-32 | Pending | Staged go-live with human approval |
+| 5. Stabilization | 33-44+ | Pending | Tuning, performance reviews |
 
 ### Completed Through Week 9
 - Weeks 1-8: IBKR connection, market data, storage, orders, income sleeve, option chains, IV rank, screening, Polygon.io calendar, multi-leg orders, options lifecycle, execution service, orchestration wiring, pre-market tests
 - Week 9: Concrete `RiskManager` with per-trade checks, stop-halt, position/cap enforcement, no-trade windows; snapshot-backed drawdown tracking; Discord stop alerts via `IRiskAlertService`; Azure.Identity upgraded to 1.17.1
+- 2026-04-07: OptiTrade consolidated (ADR-026). Backtest pipeline migrated to `tools/backtest/`. Iron condor findings recorded (ADR-028).
 
-### Blockers (as of last session)
-- Discord webhook: server/channel not yet created — needed for stop alerts to deliver externally
+### Blockers (as of 2026-04-07)
+- Discord webhook: server/channel not yet created — needed for stop alerts
 - Claude API key: needed for regime service integration (Week 10)
 
 ### Next Steps
-1. Begin Claude regime service integration; prompt for Claude API key at gate
-2. Validate Discord webhook configuration so stop alerts can deliver
-3. Add low-friction smoke scenario in `TradingSystem.SmokeTest` for orchestrator path without live IBKR
+1. Complete Phase 1 (Week 10): Claude regime service, Discord webhook
+2. SPX iron condor backtest via `tools/backtest/` — the alpha-seeking critical path
+3. SPX credit spread backtests if iron condor passes
+4. Begin Phase 3 paper validation (~June 2026)
 
 ## Known Debt
 
@@ -236,3 +268,4 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 |---|---|---|---|
 | KD-001 | Discord webhook not configured | Stop alerts silently drop | 2026-02-16 |
 | KD-002 | Claude API key not provisioned | Regime service integration blocked | 2026-02-16 |
+| KD-003 | Backtest pipeline paths use Python (not .NET) | Must install Python + deps separately for backtesting | 2026-04-07 |
