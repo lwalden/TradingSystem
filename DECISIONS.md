@@ -222,6 +222,38 @@
 
 ---
 
+### ADR-030: Paper Trading Is the Validation Gate for Options/Complex Strategies — Not Backtesting
+**Date:** 2026-05-29 | **Status:** Decided
+**Rationale:** Backtesting complex/options strategies in this system has proven unreliable as a
+go/no-go signal: (1) data-reliability and aggregation doubts in the QC pipeline make results
+hard to trust at the precision a gate needs; (2) runs are slow, lengthening the feedback loop;
+(3) the SPX iron-condor backtest came back inconclusive — NOT a demotion of iron condors, just
+not a clean pass/fail. Forward paper trading in SANDBOX exercises the real execution path
+(IBKR, screening, lifecycle, risk) on live data and is the more trustworthy validation gate.
+**Decision:** Paper trading (SANDBOX, forward) is the validation gate for options and complex
+multi-leg strategies. Backtesting is a research/sanity aid, not the activation gate. The
+SPX iron-condor result is treated as inconclusive (iron condors are neither promoted nor
+demoted on backtest evidence alone). EXCEPTION: simple stock-trade strategies may still use
+backtesting as a reasonable gate, since their fills/aggregation are well-modeled. The
+backtest-distillation / gate-evaluation work is SHELVED (see backlog).
+**Alternatives considered:**
+- *Keep SPX backtest as the go/no-go gate (status quo per ADR-026/028)* — REJECTED for complex
+  strategies. Data-reliability/aggregation doubts and an inconclusive SPX run mean a backtest
+  pass/fail would gate capital on a signal we do not trust.
+- *Invest to harden the backtest pipeline (fix aggregation, speed) until it is gate-grade* —
+  DEFERRED. High effort against a tool whose modeling of multi-leg fills is the core doubt;
+  not worth it before paper validation has run. Distillation work shelved to backlog, not deleted.
+- *No formal gate; activate on judgment* — REJECTED. A defined forward-paper gate is needed
+  before any SANDBOX→LIVE step (ties into PDR-004/PDR-005 sleeve thresholds).
+**Consequences:** Supersedes the "SPX backtest is the next critical path / go-no-go" stance in
+ADR-026 and ADR-028 for options/complex strategies — those ADRs' SPX-gate language is now
+historical. `tools/backtest/` remains for research and the simple-stock-trade exception; it is
+no longer on the activation critical path. Phase 3 paper validation (PDR-004/005 thresholds)
+becomes the gate to define numerically. Iron-condor parameters in ADR-028 remain valid reference
+parameters; only their gating role changes.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
