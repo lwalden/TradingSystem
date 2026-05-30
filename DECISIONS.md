@@ -313,4 +313,4 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 | KD-001 | Discord webhook not configured | Stop alerts silently drop | 2026-02-16 |
 | KD-002 | Claude API key not provisioned | Regime service integration blocked | 2026-02-16 |
 | KD-003 | Backtest pipeline paths use Python (not .NET) | Must install Python + deps separately for backtesting | 2026-04-07 |
-| KD-004 | CachingMarketDataService.cs ~360 lines, exceeds 300-line architecture-fitness threshold (grew across S2-001/003/005/006) | Maintainability; single class concentrates broker-call orchestration, caching, regime caching/stampede guard, and cost-cap fallback. Decompose by responsibility within TradingSystem.Strategies/Services/ per ADR-017 | 2026-05-29 |
+| KD-004 | ✅ RESOLVED 2026-05-29 (S3-001, PR #70). ~~CachingMarketDataService.cs ~360 lines, exceeds 300-line architecture-fitness threshold (grew across S2-001/003/005/006)~~ — decomposed into a 125-line facade + new 280-line MarketRegimeProvider (internal composition, no DI change, zero behavior change) per ADR-017 | Maintainability — closed | 2026-05-29 |
