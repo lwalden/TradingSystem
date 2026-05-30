@@ -46,16 +46,28 @@ public class ClaudeService : IClaudeService
         _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
 
         // Surface the active pricing path at startup so the cost posture is visible in logs.
-        if (string.IsNullOrEmpty(_config.GatewayApiKey))
+        // Tri-state across (gateway key present?) x (DirectApiFallbackEnabled?).
+        var hasGatewayKey = !string.IsNullOrEmpty(_config.GatewayApiKey);
+        if (hasGatewayKey && _config.DirectApiFallbackEnabled)
+        {
+            _logger.LogInformation(
+                "Claude pricing path: gateway-first (subscription), metered fallback capped at {Max}/day",
+                _config.MaxDirectApiCallsPerDay);
+        }
+        else if (hasGatewayKey)
+        {
+            _logger.LogInformation(
+                "Claude pricing path: gateway-only (subscription); metered direct fallback DISABLED — gateway miss falls back to deterministic rules");
+        }
+        else if (_config.DirectApiFallbackEnabled)
         {
             _logger.LogWarning(
                 "Claude gateway key not set; ALL calls will use the metered direct API");
         }
         else
         {
-            _logger.LogInformation(
-                "Claude pricing path: gateway-first (subscription), metered fallback capped at {Max}/day",
-                _config.MaxDirectApiCallsPerDay);
+            _logger.LogWarning(
+                "Claude gateway key missing AND direct fallback disabled — AI regime path is effectively OFF; regime will always use deterministic rules");
         }
     }
 
@@ -70,7 +82,18 @@ public class ClaudeService : IClaudeService
         if (gatewayResult != null)
             return gatewayResult;
 
-        // Gateway unavailable — the only remaining path is the metered direct API.
+        // Gateway miss. The metered direct API is the only remaining path, and it ships OFF by
+        // default. When disabled, do NOT touch the cap and do NOT call Anthropic — return no
+        // content so AnalyzeAsync<T> fails into the caller's try/catch → deterministic rules.
+        // This reuses the exact empty-string seam as the cap-reached path below.
+        if (!_config.DirectApiFallbackEnabled)
+        {
+            _logger.LogWarning(
+                "Direct API fallback disabled; gateway miss → deterministic rules");
+            return string.Empty;
+        }
+
+        // Fallback enabled — the only remaining path is the metered direct API.
         // Enforce the daily cap (fail closed) before issuing any metered call.
         if (!TryReserveDirectCall(out var count, out var max))
         {

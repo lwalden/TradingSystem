@@ -26,6 +26,8 @@
 
     "Claude:ApiKey": "YOUR_CLAUDE_API_KEY",
     "Claude:GatewayApiKey": "YOUR_GATEWAY_API_KEY",
-    "Claude:Model": "claude-sonnet-4-20250514"
+    "Claude:Model": "claude-sonnet-4-20250514",
+    "Claude:DirectApiFallbackEnabled": "false",
+    "Claude:GatewayTimeoutSeconds": "35"
   }
 }
