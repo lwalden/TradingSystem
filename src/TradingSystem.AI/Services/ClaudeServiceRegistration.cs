@@ -21,7 +21,7 @@ public static class ClaudeServiceRegistration
     /// <summary>
     /// Registers <see cref="IClaudeService"/> with both HTTP legs:
     /// the direct Anthropic typed client (60s timeout, unchanged) and the named
-    /// <see cref="ClaudeService.GatewayClientName"/> client whose base address and short timeout
+    /// <see cref="ClaudeService.GatewayClientName"/> client whose base address and gateway timeout
     /// are bound from the <c>Claude</c> configuration section. No-op when no key is configured.
     /// </summary>
     public static void Add(IServiceCollection services, IConfiguration configuration)
@@ -38,7 +38,7 @@ public static class ClaudeServiceRegistration
         var config = new ClaudeConfig();
         configuration.GetSection("Claude").Bind(config);
 
-        // Named gateway client — separate HTTP target, short timeout so a hung gateway falls back
+        // Named gateway client — separate HTTP target, gateway timeout so a hung gateway falls back
         // fast. Base/timeout bound from config so they track ADR-029 without code edits.
         services.AddHttpClient(ClaudeService.GatewayClientName, c =>
         {

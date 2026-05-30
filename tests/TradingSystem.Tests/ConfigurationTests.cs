@@ -56,7 +56,17 @@ public class ConfigurationTests
         var config = new ClaudeConfig();
 
         Assert.Equal("http://localhost:3131/", config.GatewayBaseUrl);
-        Assert.Equal(8, config.GatewayTimeoutSeconds);
+        // S3-003: raised 8s → 35s to cover Claude CLI cold-start for the ~1/day regime call.
+        Assert.Equal(35, config.GatewayTimeoutSeconds);
+    }
+
+    [Fact]
+    public void ClaudeConfig_DirectApiFallbackDisabledByDefault()
+    {
+        var config = new ClaudeConfig();
+
+        // S3-003: the metered direct-API fallback ships OFF; default posture is gateway-or-rules.
+        Assert.False(config.DirectApiFallbackEnabled);
     }
 }
 

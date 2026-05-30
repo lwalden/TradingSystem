@@ -111,7 +111,11 @@ public class ClaudeServiceTests
         ApiKey = "test-key",
         GatewayApiKey = string.Empty, // forces the metered direct path
         Model = "claude-sonnet-4-20250514",
-        MaxDirectApiCallsPerDay = maxDirect
+        MaxDirectApiCallsPerDay = maxDirect,
+        // S3-003: the metered direct fallback now defaults OFF. The S2-002 cap/fallback tests
+        // below exercise the metered path on purpose, so enable the flag here to keep their
+        // intent intact (a gateway miss reaches the metered branch as it did before S3-003).
+        DirectApiFallbackEnabled = true
     };
 
     private static AIAnalysisRequest SampleRequest() => new()
@@ -248,7 +252,10 @@ public class ClaudeServiceTests
         Model = "claude-sonnet-4-20250514",
         MaxDirectApiCallsPerDay = 50,
         GatewayBaseUrl = "http://localhost:3131/",
-        GatewayTimeoutSeconds = timeoutSeconds
+        GatewayTimeoutSeconds = timeoutSeconds,
+        // S3-003: enable the metered fallback so the S2-004 gateway-hang test still falls through
+        // to the direct API on a gateway miss (its original intent). The flag now defaults off.
+        DirectApiFallbackEnabled = true
     };
 
     // Builds a service whose gateway leg is served by the supplied handler and whose direct leg
@@ -347,6 +354,185 @@ public class ClaudeServiceTests
 
         var provider = services.BuildServiceProvider();
         Assert.Null(provider.GetService<IClaudeService>());
+    }
+
+    // ---- S3-003: DirectApiFallbackEnabled flag (default off) + 35s gateway timeout ----
+
+    // Like EmptyGatewayConfig but leaves DirectApiFallbackEnabled at its real default (false),
+    // so a gateway miss must NOT reach the metered path. ApiKey is still set to prove that the
+    // gate is the flag, not a missing key.
+    private static ClaudeConfig FlagOffNoGatewayConfig(int maxDirect = 50) => new()
+    {
+        ApiKey = "test-key",
+        GatewayApiKey = string.Empty, // gateway leg skipped
+        Model = "claude-sonnet-4-20250514",
+        MaxDirectApiCallsPerDay = maxDirect
+        // DirectApiFallbackEnabled defaults to false — the behavior under test.
+    };
+
+    [Fact]
+    public async Task FlagOff_GatewayDown_WithKey_DoesNotCallMeteredApi_AndFailsToRules()
+    {
+        var (service, handler, _) = BuildService(FlagOffNoGatewayConfig());
+
+        var result = await service.AnalyzeAsync(SampleRequest());
+
+        Assert.Equal(0, handler.InvocationCount); // metered API NOT hit
+        Assert.Equal(0, GetDirectCallsToday(service)); // cap counter untouched
+        Assert.True(string.IsNullOrEmpty(result), "flag-off gateway miss returns no content");
+
+        // Generic path must throw into the caller's try/catch → deterministic rules.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeAsync<ClaudeRegimeStub>(SampleRequest()));
+        Assert.Equal(0, handler.InvocationCount); // still no metered call
+    }
+
+    [Fact]
+    public async Task FlagOn_GatewayDown_WithKey_WithinCap_CallsMeteredApiOnce()
+    {
+        // EmptyGatewayConfig sets DirectApiFallbackEnabled = true (S2-002 path intact).
+        var (service, handler, _) = BuildService(EmptyGatewayConfig());
+
+        await service.AnalyzeAsync(SampleRequest());
+
+        Assert.Equal(1, handler.InvocationCount);
+        Assert.Equal(1, GetDirectCallsToday(service));
+    }
+
+    [Fact]
+    public async Task FlagOn_CapReached_FailsClosedToRules()
+    {
+        var (service, handler, _) = BuildService(EmptyGatewayConfig(maxDirect: 1));
+
+        // First call allowed, hits the metered API.
+        await service.AnalyzeAsync(SampleRequest());
+        Assert.Equal(1, handler.InvocationCount);
+
+        // Second call refused (cap == 1): no new HTTP hit, returns no content.
+        var emptyResult = await service.AnalyzeAsync(SampleRequest());
+        Assert.Equal(1, handler.InvocationCount);
+        Assert.True(string.IsNullOrEmpty(emptyResult), "capped call returns no content");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeAsync<ClaudeRegimeStub>(SampleRequest()));
+        Assert.Equal(1, handler.InvocationCount);
+    }
+
+    [Fact]
+    public async Task GatewaySuccess_FlagOff_StillReturnsGatewayContent_NoMeteredCall()
+    {
+        var config = GatewayConfig(); // GatewayApiKey set
+        config.DirectApiFallbackEnabled = false; // explicit: gateway success must not need the flag
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK,
+            "{\"response\":\"{\\\"regime\\\":\\\"riskon\\\"}\",\"source\":\"subscription\",\"model\":\"claude\",\"durationMs\":12}");
+        var (service, directHandler, _) = BuildGatewayService(config, gatewayHandler);
+
+        var result = await service.AnalyzeAsync(SampleRequest());
+
+        Assert.Contains("regime", result); // gateway content returned
+        Assert.Equal(0, directHandler.InvocationCount); // metered API NOT hit
+        Assert.Equal(0, GetDirectCallsToday(service)); // cap counter untouched
+    }
+
+    [Fact]
+    public void GatewayTimeout_DefaultsTo35Seconds()
+    {
+        // The named ClaudeGateway client timeout binds from ClaudeConfig.GatewayTimeoutSeconds,
+        // whose default is now 35s (S3-003). Wire the production DI registration with no explicit
+        // timeout in config so the default flows through, then resolve the named client.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var config = BuildConfig(
+            ("Claude:GatewayApiKey", "gw-token"),
+            ("Claude:GatewayBaseUrl", "http://localhost:3131/"));
+        ClaudeServiceRegistration.Add(services, config);
+        var provider = services.BuildServiceProvider();
+
+        var namedClient = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ClaudeService.GatewayClientName);
+        Assert.Equal(TimeSpan.FromSeconds(35), namedClient.Timeout);
+
+        // The direct typed client must stay independent. AddHttpClient<IClaudeService, ClaudeService>()
+        // registers its named client under nameof(ClaudeService); it carries the .NET default 100s
+        // timeout (the registration sets no timeout on it), proving the 35s gateway change did not
+        // leak onto the metered direct leg.
+        var directClient = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(nameof(ClaudeService));
+        Assert.NotEqual(TimeSpan.FromSeconds(35), directClient.Timeout);
+
+        // And the bound config default itself is 35s.
+        var bound = new ClaudeConfig();
+        Assert.Equal(35, bound.GatewayTimeoutSeconds);
+    }
+
+    [Fact]
+    public void Ctor_GatewayKeyPresent_FallbackOff_LogsGatewayOnlyPosture()
+    {
+        var config = new ClaudeConfig
+        {
+            ApiKey = "test-key",
+            GatewayApiKey = "gw-token",
+            DirectApiFallbackEnabled = false
+        };
+        var handler = new CountingHandler();
+        var logger = new Mock<ILogger<ClaudeService>>();
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, "{}");
+        var factory = new FakeHttpClientFactory(gatewayHandler, config);
+
+        _ = new ClaudeService(
+            logger.Object, Microsoft.Extensions.Options.Options.Create(config),
+            new HttpClient(handler), factory);
+
+        Assert.True(LoggedAtLeastOnce(logger, LogLevel.Information),
+            "gateway key present + fallback off should log the gateway-only posture at Info");
+    }
+
+    [Fact]
+    public void Ctor_NoGatewayKey_FallbackOff_LogsAiEffectivelyOffWarning()
+    {
+        var config = new ClaudeConfig
+        {
+            ApiKey = "test-key",
+            GatewayApiKey = string.Empty,
+            DirectApiFallbackEnabled = false
+        };
+        var handler = new CountingHandler();
+        var logger = new Mock<ILogger<ClaudeService>>();
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, "{}");
+        var factory = new FakeHttpClientFactory(gatewayHandler, config);
+
+        _ = new ClaudeService(
+            logger.Object, Microsoft.Extensions.Options.Options.Create(config),
+            new HttpClient(handler), factory);
+
+        Assert.True(LoggedAtLeastOnce(logger, LogLevel.Warning),
+            "no gateway key + fallback off should warn that the AI regime path is effectively OFF");
+    }
+
+    [Fact]
+    public async Task Gateway_RequestContract_PostsAskWithBearerAndExpectedFields()
+    {
+        var config = GatewayConfig();
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK,
+            "{\"response\":\"{\\\"regime\\\":\\\"riskon\\\"}\"}");
+        var (service, _, _) = BuildGatewayService(config, gatewayHandler);
+
+        await service.AnalyzeAsync(SampleRequest());
+
+        Assert.Equal(1, gatewayHandler.InvocationCount);
+        var req = gatewayHandler.LastRequest;
+        Assert.NotNull(req);
+        Assert.Equal(HttpMethod.Post, req!.Method);
+        // Constructed with the relative path "ask"; HttpClient resolves it against the gateway
+        // base address before the handler sees it, so assert the resolved path is "/ask".
+        Assert.EndsWith("/ask", req.RequestUri!.AbsolutePath);
+        Assert.True(req.Headers.TryGetValues("Authorization", out var auth));
+        Assert.Equal($"Bearer {config.GatewayApiKey}", auth!.Single());
+
+        var body = await req.Content!.ReadAsStringAsync();
+        Assert.Contains("prompt", body);
+        Assert.Contains("system", body);
+        Assert.Contains("model", body);
     }
 
     // Minimal deserialization target mirroring the regime response shape used by the caller.
