@@ -10,6 +10,28 @@ No active sprint. Run sprint planning to begin (e.g., "start a sprint" or "begin
 
 ## Sprint Archive
 
+### S3: Pivot to Paper-Trading Readiness — debt, integrations, ADR
+
+<!-- sizing: 6-7 -->
+**Completed:** 2026-05-29 | **Status:** complete | **Final main HEAD:** 5b0ecb5
+**Goal:** Pivot off backtesting-as-the-options-gate toward paper-trading readiness. Record the pivot as an ADR, finish the KD-004 refactor, harden both external integrations (Claude gateway-first with the metered fallback flagged off; Discord reusing the active bots-repo webhook channel), and prove the pre-market orchestrator wires up end-to-end in SANDBOX with externals mocked. No deterministic-trading / risk-parameter / sleeve-allocation changes; no SANDBOX→LIVE; no external API spend.
+
+**Outcome:** 6/6 items completed and merged to main (PRs #70–#75, all CI-gated, merge-commit). Test suite 449 → 479 passing (0 failed), +30 tests. Zero rework, zero blocked, zero scope changes. Strict TDD per item; executors ran in worktree isolation. A strategic pivot landed mid-PLAN: the planner found the SPX iron-condor backtest already existed and was net-negative (CAGR −0.889%), which reframed the sprint from "distill the backtest into a go/no-go" to "shelve backtesting as the gate, pivot to paper trading" — captured durably as ADR-030. Two of six items took a single review-fix cycle each (S3-003 startup-posture/log clarity `8713d93`; S3-004 loud dropped-alert signaling + transport diagnostics `e41d696`) — both operability/observability polish, not correctness; four merged clean. S3-004 review also found and fixed a pre-existing token-leak (old code logged the webhook response body).
+
+| ID | Title | Type | Risk | PR | Outcome |
+|----|-------|------|------|-----|---------|
+| S3-001 | Decompose CachingMarketDataService under 300-line threshold (KD-004, ADR-017) | refactor | ⚠ | #70 | merged, pass |
+| S3-002 | ADR-030 — backtesting isn't the options gate; paper trading is | docs | - | #71 | merged, pass |
+| S3-003 | ClaudeConfig DirectApiFallbackEnabled flag (default false) + 35s gateway timeout + ADR-029 update | feat | ⚠ | #72 | merged, pass |
+| S3-004 | Point Discord plumbing at the active bots-repo webhook channel | feat | - | #73 | merged, pass |
+| S3-005 | Backlog grooming — capture shelved alpha + backtest threads | chore | - | #74 | merged, pass |
+| S3-006 | E2E SANDBOX paper-mode orchestrator pre-market smoke test | test | ⚠ | #75 | merged, pass |
+
+**Decisions logged:** ADR-030 (new) — paper trading (SANDBOX, forward) is the validation gate for options/complex multi-leg strategies; backtesting is a research aid (simple-stock-trade exception kept); SPX iron-condor result inconclusive, NOT a demotion; supersedes the SPX-gate stance in ADR-026/028; backtest-distillation work shelved (not deleted). ADR-029 (updated, S3-003) — gateway client timeout 8s→35s (covers Claude CLI cold-start for the ~1/day regime call); metered direct-API fallback ships disabled by default (`DirectApiFallbackEnabled=false`) so default posture is gateway-or-rules with no metered spend; S2-002 fail-closed cap unchanged when fallback is enabled. Locked human decisions: hybrid sprint focus; gateway-first with metered fallback flagged off; 35s gateway timeout; Discord reuses the bots-repo webhook (corrected from solo-ops-agents after verification); 5 spec-level defaults (test-ref option B, ADR-030-only supersession, Discord option A no-new-config, B-005 detail line, S3-006 inert-AI via the S3-003 harness).
+**Debt closed:** KD-004 — CachingMarketDataService decomposed into a 125-line facade + new 280-line MarketRegimeProvider, internal composition, no DI change, zero behavior change.
+**Debt surfaced (deferred to backlog, not lost):** B-002…B-008 — SPX credit-spread backtest, shelved backtest distillation, Discord rich daily report, gateway jsonSchema adoption, Discord disabled-path log level, .pr-pipeline.json reconciliation, GatewayTimeoutSeconds upper-bound validation; plus 4 cosmetic Low test-cleanups on S3-006. B-001 untouched.
+**Next-sprint sizing:** 6–7 items (planner target 7). KD-004 is closed, so the prior hold-at-6 constraint no longer applies; all items completed with zero rework/blocked → same-or-+1. Lean to 7 unless the next sprint pulls in another high-risk refactor or net-new external integration.
+
 ### S2: Phase 2B — AI Hardening & Consolidation Follow-ups
 
 <!-- sizing: 6-7 -->
