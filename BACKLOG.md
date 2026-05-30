@@ -7,3 +7,14 @@
 | ID | Type | Title | Source | Added |
 |---|---|---|---|---|
 | B-001 | feature | Evaluate consuming the shared price/valuation service planned in the new 'acquisition-intelligence' repo (see its brief) — candidate shared price DB across trading + acquisition; dividend bot already shares core with this system | bots S4 scoping — cross-repo pointer | 2026-05-29 |
+| B-002 | feature | SPX credit-spread strategy + backtest — deferred alpha thread (ADR-027/028 step 3); only sensible after iron-condor verdict, now gated behind paper-trading validation per ADR-030 | S3-005 deferred thread | 2026-05-29 |
+| B-003 | spike | Shelved backtest distillation / gate-evaluation / SKIP-flood diagnosis — deferred per ADR-030 (backtesting no longer the options gate). Currently shelved, not deleted | S3-005 deferred thread | 2026-05-29 |
+| B-004 | feature | Discord rich daily report (Week-10 digest) — deferred from S3-004 which shipped plumbing only | S3-005 deferred thread (from S3-004) | 2026-05-29 |
+| B-005 | chore | Adopt gateway jsonSchema structured-output for regime parsing — replaces brittle substring-brace JSON parse in ClaudeService.AnalyzeAsync<T> | S3-005 deferred thread | 2026-05-29 |
+
+### B-005: Adopt gateway jsonSchema structured-output for regime parsing — replaces brittle substring-brace JSON parse in ClaudeService.AnalyzeAsync<T>
+
+Note: when jsonSchema is sent, the gateway returns 'response' as a JSON STRING (not a parsed object), so the caller must JSON.parse it. See claude-gateway docs/INTEGRATION.md structured-output section. This replaces the current brittle substring-brace extraction in ClaudeService.AnalyzeAsync<T>.
+| B-006 | chore | Discord disabled-path log level — DiscordRiskAlertService logs at Information when Enabled=false (fires every risk-check cycle -> noise); should be Debug | S3-004 review carry-forward (Low) | 2026-05-29 |
+| B-007 | chore | Reconcile .pr-pipeline.json with repo policy — declares mergeMethod squash + cycleLimit 5, but repo has squash DISABLED (merge via --merge) and directive uses cycle limit 3; reconcile to --merge / cycle-limit 3 | S3-005 deferred thread | 2026-05-29 |
+| B-008 | chore | ClaudeConfig.GatewayTimeoutSeconds upper-bound validation — no max-bound; operator could set excessive timeout. Small hardening chore | S3-003 security review (Low) | 2026-05-29 |
