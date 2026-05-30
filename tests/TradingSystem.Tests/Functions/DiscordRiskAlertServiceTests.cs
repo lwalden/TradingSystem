@@ -288,6 +288,11 @@ public class DiscordRiskAlertServiceTests
         var logs = AllLogArgStrings(logger).ToList();
         Assert.DoesNotContain(logs, s => s.Contains(SecretToken));
         Assert.DoesNotContain(logs, s => s.Contains("/api/webhooks/123"));
+        // A dropped risk alert must be loud and log-searchable: the "NOT delivered" wording and the
+        // structured AlertDropped=true field (rendered into the formatted message) must both appear
+        // on this terminal-failure path.
+        Assert.Contains(logs, s => s.Contains("NOT delivered"));
+        Assert.Contains(logs, s => s.Contains("AlertDropped=True"));
     }
 
     [Fact]
@@ -317,6 +322,48 @@ public class DiscordRiskAlertServiceTests
         var logs = AllLogArgStrings(logger).ToList();
         Assert.DoesNotContain(logs, s => s.Contains(SecretToken));
         Assert.DoesNotContain(logs, s => s.Contains("/api/webhooks/123"));
+    }
+
+    [Fact]
+    public async Task NonRetriable5xx_DropsAlert_LoudSignal_NoTokenLeak()
+    {
+        // A 500 is non-429 → terminal on the first attempt, no retry. The drop must be loud:
+        // "NOT delivered" + AlertDropped=true + an Attempts count, at Error level, token-free.
+        var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.InternalServerError));
+        var (service, h, logger, delays) = Build(Config(), handler);
+
+        await service.SendDrawdownHaltTriggeredAsync(Metrics());
+
+        Assert.Equal(1, h.InvocationCount);
+        Assert.Empty(delays);
+        Assert.True(LogCount(logger, LogLevel.Error) >= 1, "a non-retriable failure should log an error");
+        var logs = AllLogArgStrings(logger).ToList();
+        Assert.Contains(logs, s => s.Contains("NOT delivered"));
+        Assert.Contains(logs, s => s.Contains("AlertDropped=True"));
+        Assert.Contains(logs, s => s.Contains("Attempts"));
+        Assert.DoesNotContain(logs, s => s.Contains(SecretToken));
+        Assert.DoesNotContain(logs, s => s.Contains("/api/webhooks/123"));
+    }
+
+    [Fact]
+    public async Task UserinfoBypassUrl_Rejected_RedactsRealHostOnly_NoPost()
+    {
+        // Security hardening lock: a userinfo (user@host) authority must not smuggle a non-Discord
+        // host past the allow-list. "https://discord.com@evil.com/..." has authority host evil.com,
+        // not discord.com — it MUST be rejected (no POST) and the redacted log must show evil.com
+        // (the real host) with no token. Production already does this; this test locks it.
+        var url = "https://discord.com@evil.com/api/webhooks/1/tok";
+        var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
+        var (service, h, logger, _) = Build(Config(url: url), handler);
+
+        await service.SendDailyStopTriggeredAsync(Metrics());
+
+        Assert.Equal(0, h.InvocationCount);
+        var logs = AllLogArgStrings(logger).ToList();
+        // The redacted form must name the true host (evil.com) and must not leak the token/path.
+        Assert.Contains(logs, s => s.Contains("evil.com"));
+        Assert.DoesNotContain(logs, s => s.Contains("/api/webhooks/1/tok"));
+        Assert.DoesNotContain(logs, s => s.Contains("tok") && s.Contains("webhooks"));
     }
 
     [Fact]

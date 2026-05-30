@@ -165,9 +165,15 @@ public class DiscordRiskAlertService : IRiskAlertService
 
                 if ((int)response.StatusCode != 429 || attempt >= MaxRetries)
                 {
+                    // Terminal failure: a non-429 4xx/5xx, or a 429 that has exhausted the retry
+                    // count. The alert is gone and will NOT be retried — make this loud and
+                    // log-searchable (AlertDropped=true) so a missed STOP/HALT alert surfaces.
                     _logger.LogError(
-                        "Failed to send Discord risk alert. StatusCode={StatusCode}, Alert={Title}",
+                        "Risk alert NOT delivered and will not be retried — verify the risk stop was acted on manually. AlertDropped={AlertDropped}, StatusCode={StatusCode}, Attempts={Attempt}/{MaxRetries}, Alert={Title}",
+                        true,
                         (int)response.StatusCode,
+                        attempt + 1,
+                        MaxRetries,
                         title);
                     return;
                 }
@@ -175,9 +181,14 @@ public class DiscordRiskAlertService : IRiskAlertService
                 var remaining = MaxTotalWaitSeconds - (DateTime.UtcNow - start).TotalSeconds;
                 if (remaining <= 0)
                 {
+                    // Cumulative wait budget exhausted before the retry count was. Same outcome:
+                    // the alert is dropped permanently — emit the loud, searchable signal.
                     _logger.LogError(
-                        "Discord rate-limit retry budget exhausted. StatusCode={StatusCode}, Alert={Title}",
+                        "Risk alert NOT delivered and will not be retried — retry budget exhausted; verify the risk stop was acted on manually. AlertDropped={AlertDropped}, StatusCode={StatusCode}, Attempts={Attempt}/{MaxRetries}, Alert={Title}",
+                        true,
                         (int)response.StatusCode,
+                        attempt + 1,
+                        MaxRetries,
                         title);
                     return;
                 }
@@ -203,11 +214,16 @@ public class DiscordRiskAlertService : IRiskAlertService
             }
             catch (HttpRequestException ex)
             {
-                // Transport failure. Log the exception type only — its message/inner data could
-                // in principle echo the request URI, so never log the exception object directly.
+                // Transport failure: the alert never reached Discord and will NOT be retried —
+                // make it loud and searchable (AlertDropped=true). Log only token-free diagnostics:
+                // exception type, the nullable HTTP status, and the inner exception type. NEVER log
+                // ex.Message / ex.ToString() — those can echo the token-bearing request URI.
                 _logger.LogError(
-                    "Failed to send Discord risk alert (transport error: {ErrorType}); Alert={Title}",
+                    "Risk alert NOT delivered and will not be retried — transport error; verify the risk stop was acted on manually. AlertDropped={AlertDropped}, ErrorType={ErrorType}, StatusCode={StatusCode}, InnerErrorType={InnerErrorType}, Alert={Title}",
+                    true,
                     ex.GetType().Name,
+                    ex.StatusCode,
+                    ex.InnerException?.GetType().Name,
                     title);
                 return;
             }
