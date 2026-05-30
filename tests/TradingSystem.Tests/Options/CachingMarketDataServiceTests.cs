@@ -264,13 +264,13 @@ public class CachingMarketDataServiceTests
     public void SanitizeRationale_StripsControlChars_AndTruncates()
     {
         // null / empty / whitespace-only => "none"
-        Assert.Equal("none", CachingMarketDataService.SanitizeRationale(null));
-        Assert.Equal("none", CachingMarketDataService.SanitizeRationale(""));
-        Assert.Equal("none", CachingMarketDataService.SanitizeRationale("   "));
+        Assert.Equal("none", MarketRegimeProvider.SanitizeRationale(null));
+        Assert.Equal("none", MarketRegimeProvider.SanitizeRationale(""));
+        Assert.Equal("none", MarketRegimeProvider.SanitizeRationale("   "));
 
         // control chars stripped, whitespace collapsed
         var dirty = "line1\nline2\tcol\r\nmore   spaces";
-        var clean = CachingMarketDataService.SanitizeRationale(dirty);
+        var clean = MarketRegimeProvider.SanitizeRationale(dirty);
         Assert.DoesNotContain('\n', clean);
         Assert.DoesNotContain('\r', clean);
         Assert.DoesNotContain('\t', clean);
@@ -279,7 +279,7 @@ public class CachingMarketDataServiceTests
 
         // long input is capped to ~500 chars (+1 ellipsis) with a truncation marker
         var longInput = new string('x', 1000);
-        var truncated = CachingMarketDataService.SanitizeRationale(longInput);
+        var truncated = MarketRegimeProvider.SanitizeRationale(longInput);
         Assert.True(truncated.Length <= 501, $"Expected length <= 501 but was {truncated.Length}");
         Assert.EndsWith("…", truncated); // appended ellipsis on truncation
     }
@@ -427,7 +427,7 @@ public class CachingMarketDataServiceTests
         Assert.Equal(first.Regime, second.Regime);
         Assert.Equal(first.RiskMultiplier, second.RiskMultiplier);
         claudeMock.Verify(
-            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -449,7 +449,7 @@ public class CachingMarketDataServiceTests
         await service.GetMarketRegimeAsync();
 
         claudeMock.Verify(
-            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }
@@ -465,12 +465,12 @@ public class CachingMarketDataServiceTests
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var claudeMock = new Mock<IClaudeService>();
         claudeMock
-            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            .Setup(c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 await gate.Task; // block until the test releases all callers
-                return new CachingMarketDataService.ClaudeRegimeResponse
+                return new MarketRegimeProvider.ClaudeRegimeResponse
                 {
                     Regime = "RiskOn",
                     RiskMultiplier = 0.75,
@@ -490,7 +490,7 @@ public class CachingMarketDataServiceTests
         var results = await Task.WhenAll(tasks);
 
         claudeMock.Verify(
-            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
             Times.Once);
 
@@ -534,7 +534,7 @@ public class CachingMarketDataServiceTests
         SetupRegimeInputMocks(brokerMock); // VIX 18, SPY above MAs => rule path = RiskOn
         var claudeMock = new Mock<IClaudeService>();
         claudeMock
-            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            .Setup(c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("claude down"));
 
@@ -549,7 +549,7 @@ public class CachingMarketDataServiceTests
 
         // Claude attempted exactly once (first call); the cached fallback short-circuits the retry.
         claudeMock.Verify(
-            c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -592,9 +592,9 @@ public class CachingMarketDataServiceTests
     {
         var claudeMock = new Mock<IClaudeService>();
         claudeMock
-            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            .Setup(c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CachingMarketDataService.ClaudeRegimeResponse
+            .ReturnsAsync(new MarketRegimeProvider.ClaudeRegimeResponse
             {
                 Regime = "RiskOn",
                 RiskMultiplier = 0.75,
@@ -619,11 +619,17 @@ public class CachingMarketDataServiceTests
 
     // Helper: force the single-slot regime cache's CachedAt back by the given (negative) offset,
     // mirroring the _quoteCache reflection pattern used in GetQuoteAsync_CacheExpires_HitsBrokerAgain.
+    // KD-004: regime caching moved to MarketRegimeProvider; navigate service._regimeProvider first,
+    // then mutate the provider's _regimeCache field.
     private static void ExpireRegimeCache(CachingMarketDataService service, TimeSpan offset)
     {
-        var field = typeof(CachingMarketDataService)
+        var providerField = typeof(CachingMarketDataService)
+            .GetField("_regimeProvider", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var provider = providerField.GetValue(service)!;
+
+        var field = provider.GetType()
             .GetField("_regimeCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var current = field.GetValue(service);
+        var current = field.GetValue(provider);
         Assert.NotNull(current); // cache must be populated before expiry can be forced
 
         var tupleType = current!.GetType();
@@ -631,7 +637,7 @@ public class CachingMarketDataServiceTests
         var cachedAt = (DateTime)tupleType.GetField("Item2")!.GetValue(current)!;
 
         var newValue = Activator.CreateInstance(tupleType, regime, cachedAt.Add(offset));
-        field.SetValue(service, newValue);
+        field.SetValue(provider, newValue);
     }
 
     // Helper: build a SUT wired to a Claude mock that returns a regime with the given
@@ -645,9 +651,9 @@ public class CachingMarketDataServiceTests
 
         var claudeMock = new Mock<IClaudeService>();
         claudeMock
-            .Setup(c => c.AnalyzeAsync<CachingMarketDataService.ClaudeRegimeResponse>(
+            .Setup(c => c.AnalyzeAsync<MarketRegimeProvider.ClaudeRegimeResponse>(
                 It.IsAny<AIAnalysisRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CachingMarketDataService.ClaudeRegimeResponse
+            .ReturnsAsync(new MarketRegimeProvider.ClaudeRegimeResponse
             {
                 Regime = "RiskOn",
                 RiskMultiplier = riskMultiplier,
