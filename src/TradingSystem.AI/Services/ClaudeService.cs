@@ -46,7 +46,7 @@ public class ClaudeService : IClaudeService
         _httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
 
         // Surface the active pricing path at startup so the cost posture is visible in logs.
-        // Tri-state across (gateway key present?) x (DirectApiFallbackEnabled?).
+        // Four-state (2x2: gateway key present? × DirectApiFallbackEnabled?).
         var hasGatewayKey = !string.IsNullOrEmpty(_config.GatewayApiKey);
         if (hasGatewayKey && _config.DirectApiFallbackEnabled)
         {
@@ -57,12 +57,13 @@ public class ClaudeService : IClaudeService
         else if (hasGatewayKey)
         {
             _logger.LogInformation(
-                "Claude pricing path: gateway-only (subscription); metered direct fallback DISABLED — gateway miss falls back to deterministic rules");
+                "Claude pricing path: gateway-only (subscription); metered direct fallback DISABLED");
         }
         else if (_config.DirectApiFallbackEnabled)
         {
             _logger.LogWarning(
-                "Claude gateway key not set; ALL calls will use the metered direct API");
+                "Claude gateway key not set; ALL calls will use the metered direct API, capped at {Max}/day",
+                _config.MaxDirectApiCallsPerDay);
         }
         else
         {
