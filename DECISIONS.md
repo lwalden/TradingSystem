@@ -314,3 +314,67 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 | KD-002 | Claude API key not provisioned | Regime service integration blocked | 2026-02-16 |
 | KD-003 | Backtest pipeline paths use Python (not .NET) | Must install Python + deps separately for backtesting | 2026-04-07 |
 | KD-004 | ✅ RESOLVED 2026-05-29 (S3-001, PR #70). ~~CachingMarketDataService.cs ~360 lines, exceeds 300-line architecture-fitness threshold (grew across S2-001/003/005/006)~~ — decomposed into a 125-line facade + new 280-line MarketRegimeProvider (internal composition, no DI change, zero behavior change) per ADR-017 | Maintainability — closed | 2026-05-29 |
+
+---
+
+## Migrated from OptiTrade | 2026-05-31
+
+> OptiTrade (Python options backtest system) was consolidated into TradingSystem in April 2026 (ADR-026).
+> The following records the architectural decisions and research outcomes from OptiTrade that
+> are not already captured above. The Python runtime decisions (uv, hatchling, pydantic-settings,
+> SQLAlchemy) are OptiTrade-internal and are archived in `research/optitrade-phase1/` rather than
+> carried forward — TradingSystem uses C#/.NET 8 for its runtime.
+> The backtest pipeline decisions (ADR-020 through ADR-024 below) are substantive and inform
+> how the QC cloud pipeline in `tools/backtest/` was designed.
+
+---
+
+### OT-ADR-020: Automated QuantConnect cloud backtest pipeline
+**Date:** 2026-04-03 | **Status:** Superseded by `tools/backtest/` consolidation (ADR-026)
+**Decision:** Automate backtesting via QuantConnect REST API (`scripts/run_cloud_backtest.py`) instead of manual browser copy-paste workflow.
+**Rationale:** Manual workflow required copy-pasting C# into QC browser, waiting 15-20 min, then clicking through the UI to download artifacts. The REST API supports file push, compile, backtest creation, polling, log download, and result collection — all scriptable. *(This became the basis for `tools/backtest/` in TradingSystem.)*
+**Alternatives considered:** LEAN CLI (`lean cloud backtest`) — broken on Python 3.14 due to click version conflict; local LEAN via Docker — requires solving options data sourcing; Playwright browser automation — works but fragile.
+
+---
+
+### OT-ADR-021: Fix commission and slippage models in LEAN backtest
+**Date:** 2026-04-03 | **Status:** Applied (fixes carried into `tools/backtest/` algorithms)
+**Decision:** Replace `ConstantFeeModel(0.65)` with `InteractiveBrokersFeeModel()` and reduce `ConstantSlippageModel` from 0.05 (5% of option price) to 0.005 (0.5%).
+**Rationale:** `ConstantFeeModel` charged $0.65 per fill (not per contract) — undercharging commission by ~5x. `ConstantSlippageModel(0.05)` applied 5% of option price as slippage (~$17.50/contract), far exceeding the intended $0.05/contract. Combined: old model over-penalized slippage and under-penalized commission. Corrected baseline CAGR moved from -1.09% to -0.52%.
+
+---
+
+### OT-ADR-022: QC_CloudBacktest.cs is canonical; local Main.cs is stale
+**Date:** 2026-04-03 | **Status:** Historical (both files archived in `research/optitrade-phase1/`)
+**Decision:** `backtests/QC_CloudBacktest.cs` is the canonical, evolved algorithm. `backtests/lean/Main.cs` was not synced and should not be used.
+**Rationale:** Cloud version has critical bug fixes: correct slippage multiplier (×contracts not ×1), strike-based fallback when Greeks are zero, Minute resolution for better data coverage, correct combo order sizing. Local Main.cs is missing all of these.
+
+---
+
+### OT-ADR-023: IV filter implemented as ATM option chain IV, not IVR
+**Date:** 2026-04-07 | **Status:** Active — applies to options sleeve parameters
+**Decision:** Entry IV filter uses ATM option implied volatility read directly from the option chain (`contract.ImpliedVolatility`), not IV Rank (IVR).
+**Rationale:** IVR requires a rolling 52-week IV history not directly available in the LEAN option chain. ATM IV from the chain is immediately available and achieves the same economic goal: filtering entries when options price in minimal risk. The `ivr_min: 25` parameter existed in YAML/StrategyConstants for months but was never wired up — the algorithm was entering in all vol environments. Fixing this (via `EntryMinAtmIv = 0.18`) was the key lever that moved CAGR from -0.52% toward the gate-passing +0.07%.
+**Tradeoff accepted:** ATM IV is an absolute level, not rank — it doesn't capture "high vol relative to recent history." Acceptable for Phase 1; paper validation may reveal the need for a proper IVR indicator.
+**Alternatives considered:** IVR via custom rolling indicator (complex, warmup data required); VIX threshold via `AddData` (adds secondary symbol dependency); keeping unimplemented IVR (economically broken).
+
+---
+
+### OT-ADR-024: Phase 1 gate-passing SPY iron condor parameter set
+**Date:** 2026-04-07 | **Status:** Active — reference parameters per ADR-028
+**Decision:** Lock Phase 1 baseline parameters: `entry_min_atm_iv: 0.18`, `profit_target_pct: 0.70`, `min_credit_to_width_ratio: 0.20` ($2.00 min on $10 wings), `stop_loss_credit_multiple: 2.0`, `wing_width_spy: 10`, `short_delta_target: 0.16`.
+**Results:** CAGR +0.07%, Profit Factor 2.0, Win Rate 72.22%, Max Drawdown 1.07%, IS/OOS delta 0.42pp, 18 trades over 2019-2025. Slippage drag 4.52% (well below 30% gate). `parameter_hash: f32c6bb59a1432156890dca414c7bafc5fcd637cc6d8cd04a37351c500ebccbd`
+**Rationale:** 8 backtest iterations with economically motivated changes only. Key findings: (1) removing stop loss is wrong — worsens outcomes; (2) `ivr_min` was never wired in C# — fixed via ATM IV; (3) 20pt wings are worse than 10pt; (4) IV=18% is the sweet spot — IV=20% filters too many quality OOS trades; (5) PT=70% is near-optimal — PT=75% degrades to 0.00% CAGR.
+**Alternatives considered (all rejected):** IV=16% (-0.26% CAGR), IV=20% (only 9 trades/7yr, killed OOS), PT=65% (-0.04%), PT=50% (-0.26%), no stop loss (-0.89%), 20pt wings (-0.91%).
+**Note:** These are SPY parameters. The SPX variant (100x multiplier, ~10x commission efficiency) is the next research step per ADR-027/028, now gated behind paper validation per ADR-030.
+
+---
+
+### OptiTrade Project State | 2026-04-07 (at consolidation)
+
+> Recorded for historical reference. TradingSystem's canonical state is the Project State Snapshot above.
+
+**Phase 1 gate:** PASSED (2026-04-07, Run 7, IV=18%/PT=70%/MinCred=$2.00)
+**Phase 2-4:** Pending; Phase 2 unblocked by Phase 1 gate, now superseded by paper trading path (ADR-030)
+**Open PRs at consolidation:** PR #8 (YAML configs, main branch) and PR #9 (scripts + LEAN scaffold) — both are now archived in `research/optitrade-phase1/`; no action needed
+**Known debt carried forward:** none — KD-001/002/003 resolved; KD-004/005 moot (local LEAN not used)

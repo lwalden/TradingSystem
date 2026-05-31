@@ -1,0 +1,12 @@
+{
+  "window_start": "YYYY-MM-DD",
+  "window_end": "YYYY-MM-DD",
+  "trading_days": 0,
+  "return_delta_annualized": 0.0,
+  "max_dd_delta": 0.0,
+  "bootstrap_resamples": 0,
+  "return_delta_ci90_low": 0.0,
+  "return_delta_ci90_high": 0.0,
+  "ai_fallback_test_passed": false
+}
+

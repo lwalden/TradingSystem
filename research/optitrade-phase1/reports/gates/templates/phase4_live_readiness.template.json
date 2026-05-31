@@ -1,0 +1,11 @@
+{
+  "runbook_complete": false,
+  "emergency_close_tested": false,
+  "monitoring_verified": false,
+  "parity_report_complete": false,
+  "critical_parity_unknowns": 0,
+  "prod_stability_days": 0,
+  "week1_live_constraints_passed": false,
+  "week2_4_staged_scaling_passed": false
+}
+

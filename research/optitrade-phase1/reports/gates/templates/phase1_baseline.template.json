@@ -1,0 +1,14 @@
+{
+  "cagr_net": 0.0,
+  "max_drawdown": 0.0,
+  "sharpe": 0.0,
+  "win_rate": 0.0,
+  "profit_factor": 0.0,
+  "in_sample_cagr": 0.0,
+  "oos_cagr": 0.0,
+  "slippage_drag_pct": 0.0,
+  "date_range_start": "2019-01-01",
+  "date_range_end": "2025-12-31",
+  "parameter_hash": "replace_with_sha256"
+}
+

@@ -1,0 +1,71 @@
+# risk_limits.yaml — Configurable risk parameter overrides
+#
+# These are SOFT limits that govern position sizing, entry filtering,
+# and monitoring thresholds. They can be tuned without a code change.
+#
+# HARD limits (loss halts, max deployed capital, position caps) live in
+# optimind/core/constants.py and are NOT overridable here. Any attempt
+# to set a value here that exceeds a constant.py hard limit is ignored
+# at runtime and a warning is logged.
+#
+# Last updated: 2026-02-21
+
+position_sizing:
+  # Maximum capital at risk per trade as % of NLV
+  # Must be <= constants.MAX_RISK_PER_TRADE_PCT (2.5%)
+  max_risk_per_trade_pct: 2.0
+
+  # Maximum total deployed capital across all open positions as % of NLV
+  # Must be <= constants.MAX_DEPLOYED_CAPITAL_PCT (40%)
+  max_deployed_capital_pct: 30.0    # conservative for Phase 1 paper trading
+
+  # Maximum number of concurrent open iron condor positions (across all underlyings)
+  max_open_positions: 4
+
+concentration:
+  # Maximum positions per underlying symbol
+  # Must be <= constants.MAX_POSITIONS_PER_UNDERLYING (2)
+  max_positions_per_underlying: 1   # Phase 1: one position per underlying at a time
+
+  # Maximum positions in same sector
+  # Must be <= constants.MAX_SECTOR_POSITIONS (3)
+  max_sector_positions: 2
+
+portfolio_greeks:
+  # Net portfolio delta warning threshold as % of NLV (triggers alert, not halt)
+  # Hard limit is constants.PORTFOLIO_DELTA_LIMIT_PCT (10%)
+  delta_warn_pct: 5.0
+  delta_limit_pct: 7.0              # soft limit; hard limit in constants.py is 10%
+
+  # Net portfolio vega limit as % of NLV
+  # Note: enforced Phase 2+; tracked but not enforced in Phase 1
+  vega_limit_pct: 1.5
+
+margin:
+  # Margin utilization soft warning threshold (below hard limits in constants.py)
+  # Hard limits: Reg-T 60%, PM 40%
+  margin_warn_regt_pct: 45.0
+  margin_warn_pm_pct: 30.0
+
+loss_monitoring:
+  # Daily loss warning before halt (halt is at constants.DAILY_LOSS_HALT_PCT = 3%)
+  daily_loss_warn_pct: 2.0
+
+  # Weekly loss warning before limit (limit is at constants.WEEKLY_LOSS_LIMIT_PCT = 5%)
+  weekly_loss_warn_pct: 3.5
+
+  # Monthly loss warning before limit (limit is at constants.MONTHLY_LOSS_LIMIT_PCT = 10%)
+  monthly_loss_warn_pct: 7.0
+
+entry_filters:
+  # Minimum days between new entries on the same underlying (cooldown after fill)
+  min_days_between_entries_same_underlying: 5
+
+  # Skip entry if market is within N days of a scheduled FOMC meeting
+  skip_days_before_fomc: 2
+
+  # Skip entry if underlying is within N days of earnings (ETFs: index rebalance dates)
+  skip_days_before_earnings: 5
+
+  # Minimum average daily volume on the underlying (contracts) for ETFs
+  min_underlying_adv: 500000

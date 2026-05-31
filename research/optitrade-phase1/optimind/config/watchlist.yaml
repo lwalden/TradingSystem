@@ -1,0 +1,78 @@
+# watchlist.yaml — Underlyings eligible for iron condor trading
+#
+# Each entry defines the underlying, its exchange/product type, and
+# any symbol-specific overrides to the default strategy parameters
+# in strategies.yaml.
+#
+# Options type:
+#   index   — cash-settled, European-style (SPX, NDX, RUT)
+#   etf     — equity-settled, American-style (SPY, QQQ, IWM)
+#
+# Last updated: 2026-02-21
+
+underlyings:
+  - symbol: SPX
+    description: S&P 500 Index
+    exchange: CBOE
+    options_type: index
+    currency: USD
+    # SPX-specific overrides
+    wing_width: 50              # points; matches strategies.yaml wing_width_spx
+    min_credit_usd: 2.00        # minimum net credit per spread (not just ratio)
+    priority: 1                 # scan order priority (1 = highest)
+    enabled: true
+    notes: >
+      Cash-settled, European-style, 60/40 tax treatment (Section 1256).
+      Use SPXW for weekly expirations (PM-settled).
+      Prefer 3rd-Friday monthly expirations for Phase 1.
+
+  - symbol: SPY
+    description: SPDR S&P 500 ETF
+    exchange: SMART
+    options_type: etf
+    currency: USD
+    wing_width: 5               # dollars
+    min_credit_usd: 0.20
+    priority: 2
+    enabled: true
+    notes: >
+      American-style; assignment risk near expiration.
+      High liquidity and tight spreads.
+      Use as SPX hedge or when SPX spreads are wide.
+
+  - symbol: QQQ
+    description: Invesco QQQ Trust (Nasdaq-100 ETF)
+    exchange: SMART
+    options_type: etf
+    currency: USD
+    wing_width: 5               # dollars
+    min_credit_usd: 0.20
+    priority: 3
+    enabled: true
+    notes: >
+      Higher beta and volatility than SPX/SPY.
+      Treat as a separate sector (tech-heavy) for concentration limits.
+      Consider reducing position size vs SPX.
+
+  - symbol: IWM
+    description: iShares Russell 2000 ETF
+    exchange: SMART
+    options_type: etf
+    currency: USD
+    wing_width: 5               # dollars
+    min_credit_usd: 0.20
+    priority: 4
+    enabled: true
+    notes: >
+      Small-cap; higher vol and wider bid-ask vs SPX/SPY.
+      Only enter when IVR >= 30 to ensure adequate premium.
+      Reduced size recommended in Phase 1.
+
+# Global scan settings
+scan:
+  # Maximum number of underlyings to open new positions on per scan cycle
+  max_new_positions_per_scan: 2
+
+  # Scan runs only during regular trading hours (market open + buffer)
+  scan_start_time: "09:45"     # ET; 15-min buffer after open
+  scan_end_time:   "15:00"     # ET; no new entries in final hour

@@ -1,0 +1,103 @@
+# strategies.yaml — Canonical strategy parameter source
+#
+# This file is the single source of truth for all strategy parameters.
+# scripts/generate_lean_config.py reads this file and emits
+# backtests/lean/Config/StrategyConstants.cs.
+#
+# IMPORTANT: Hard risk limits (max drawdown, position limits, loss halts)
+# live in optimind/core/constants.py and are NOT overridable here.
+# This file controls strategy construction and entry/exit logic only.
+#
+# Last updated: 2026-02-21
+
+iron_condor:
+  # ── Entry criteria ──────────────────────────────────────────────────────────
+  entry:
+    # Days to expiration range for new positions
+    dte_min: 30
+    dte_target: 45
+    dte_max: 60
+
+    # Short strike delta targets (absolute value)
+    # Call side: sell the strike with delta closest to short_delta_target
+    # Put side: sell the strike with delta closest to short_delta_target
+    short_delta_target: 0.16       # ~1 standard deviation
+    short_delta_tolerance: 0.04    # acceptable delta band: [0.12, 0.20]
+
+    # Wing width: distance from short to long strike (in points for SPX, dollars for ETFs)
+    wing_width_spx: 50             # SPX points
+    wing_width_spy: 10             # SPY dollars
+    wing_width_qqq: 5              # QQQ dollars
+    wing_width_iwm: 5              # IWM dollars
+
+    # Minimum credit to collect (as fraction of wing width / max loss)
+    min_credit_to_width_ratio: 0.20   # require >= 20% of wing width as credit ($2.00 min for $10 wings)
+
+    # IV filter: only enter if ATM implied volatility (annualized) is above floor
+    # This is the implemented version of the IVR concept — filters low-credit environments.
+    # 0.16 ≈ VIX 16 — skips entries when options are pricing in minimal risk (thin credit).
+    ivr_min: 25                    # kept for reference; not used in backtest (see entry_min_atm_iv)
+    ivr_max: 75                    # kept for reference; not used in backtest
+    entry_min_atm_iv: 0.18         # skip entry if ATM implied vol < 18% annualized
+
+    # Maximum bid-ask spread on individual legs (fraction of mid price)
+    max_leg_spread_pct: 0.10
+
+  # ── Exit criteria ────────────────────────────────────────────────────────────
+  exit:
+    # Profit target: close when position reaches this % of max profit
+    profit_target_pct: 0.70        # close at 70% of max profit
+
+    # Stop loss: close when loss reaches this multiple of initial credit received
+    stop_loss_credit_multiple: 2.0 # close at 200% of credit
+
+    # DTE-based management checkpoints
+    dte_management:
+      - dte: 21
+        action: evaluate            # assess position; roll if tested, hold if within body
+      - dte: 14
+        action: evaluate_or_close   # strongly consider closing
+      - dte: 7
+        action: close               # mandatory close regardless of P&L
+
+  # ── Sizing ───────────────────────────────────────────────────────────────────
+  sizing:
+    # Number of contracts per position (Phase 1 paper baseline)
+    # Actual sizing is risk-based: see risk_limits.yaml and constants.py
+    default_contracts: 5
+    max_contracts: 5               # hard cap per position in Phase 1
+
+  # ── SmartPricing ─────────────────────────────────────────────────────────────
+  smart_pricing:
+    # Entry: start at mid, walk toward natural (debit side) by this increment
+    entry_start: mid
+    entry_step_pct: 0.10           # move 10% of spread toward natural per step
+    entry_max_steps: 5
+    entry_step_interval_seconds: 30
+
+    # Exit: start at mid, walk toward natural (credit side) by this increment
+    exit_start: mid
+    exit_step_pct: 0.10
+    exit_max_steps: 5
+    exit_step_interval_seconds: 30
+
+  # ── Backtest parameters (LEAN-specific) ──────────────────────────────────────
+  backtest:
+    # Historical simulation range (matches Phase 1 gate requirement)
+    date_range_start: "2019-01-01"
+    date_range_end:   "2025-12-31"
+
+    # In-sample / out-of-sample split
+    # In-sample: 2019-01-01 to 2022-12-31 (~4 years)
+    # Out-of-sample: 2023-01-01 to 2025-12-31 (~3 years)
+    in_sample_end:    "2022-12-31"
+    oos_start:        "2023-01-01"
+
+    # Slippage model: fixed per-leg fill slippage in dollars
+    slippage_per_leg_usd: 0.05     # $0.05 per contract per leg (conservative)
+
+    # Commission model: flat per-contract (matches IBKR tiered estimate)
+    commission_per_contract_usd: 0.65
+
+    # Initial backtest capital
+    initial_capital_usd: 400000
