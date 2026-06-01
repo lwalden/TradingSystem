@@ -1,0 +1,13 @@
+{
+  "parameter_hash": "f32c6bb59a1432156890dca414c7bafc5fcd637cc6d8cd04a37351c500ebccbd",
+  "date_range_start": "2019-01-01",
+  "date_range_end": "2025-12-31",
+  "cagr_net": 0.0007000000000000001,
+  "in_sample_cagr": -0.0011,
+  "oos_cagr": 0.0031,
+  "max_drawdown": 0.010700000000000001,
+  "win_rate": 0.7222,
+  "profit_factor": 2.0,
+  "slippage_drag_pct": 0.0452,
+  "sharpe": -6.126
+}

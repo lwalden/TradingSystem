@@ -1,0 +1,63 @@
+# sectors.yaml — Sector correlation mapping for concentration limits
+#
+# Used by the risk engine to enforce constants.MAX_SECTOR_POSITIONS (3)
+# and risk_limits.yaml max_sector_positions (2 in Phase 1).
+#
+# Each underlying is assigned a primary sector. Positions are grouped
+# by sector when evaluating concentration limits.
+#
+# Correlation tiers (informational, not enforced in code):
+#   high   — historically > 0.80 correlation with sector peers
+#   medium — historically 0.50–0.80 correlation
+#   low    — historically < 0.50 correlation
+#
+# Last updated: 2026-02-21
+
+sector_assignments:
+  # Broad market / multi-sector indices
+  # These count as their own sector to avoid double-counting with ETF positions
+  - symbol: SPX
+    sector: broad_market
+    correlation_tier: high
+    notes: S&P 500; highly correlated with SPY by construction
+
+  - symbol: SPY
+    sector: broad_market
+    correlation_tier: high
+    notes: >
+      SPX and SPY are treated as the same sector.
+      Holding both simultaneously counts as 2 broad_market positions.
+
+  # Technology-heavy
+  - symbol: QQQ
+    sector: technology
+    correlation_tier: high
+    notes: >
+      Nasdaq-100; ~55% technology weighting.
+      Treated as a distinct sector from broad_market despite overlap.
+
+  # Small-cap
+  - symbol: IWM
+    sector: small_cap
+    correlation_tier: medium
+    notes: >
+      Russell 2000; lower correlation with SPX than QQQ.
+      Provides diversification benefit in multi-position portfolios.
+
+# Sector definitions (reference table)
+sectors:
+  broad_market:
+    description: Large-cap U.S. broad market indices and ETFs
+    max_positions: 2           # overrides risk_limits.yaml for this sector in Phase 1
+
+  technology:
+    description: Technology-heavy indices and sector ETFs
+    max_positions: 1
+
+  small_cap:
+    description: Small-cap U.S. equity indices and ETFs
+    max_positions: 1
+
+# Correlation groupings used for risk warnings (not hard enforcement)
+# If two positions have correlation >= the threshold, log a concentration warning
+correlation_warning_threshold: 0.80

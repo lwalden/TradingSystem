@@ -1,0 +1,10 @@
+{
+  "window_start": "YYYY-MM-DD",
+  "window_end": "YYYY-MM-DD",
+  "trading_days": 0,
+  "hard_limit_violations": 0,
+  "open_p0_defects": 0,
+  "risk_telemetry_complete": false,
+  "notes": ""
+}
+
