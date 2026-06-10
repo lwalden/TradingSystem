@@ -4,7 +4,26 @@
 > Individual issues are tracked as native Claude Code Tasks (persistent across sessions).
 > Archived to git history when a sprint completes.
 
-No active sprint. Run sprint planning to begin (e.g., "start a sprint" or "begin Phase 1").
+**Sprint:** S4 — Paper-Trading Readiness
+**Status:** in-progress
+**Phase:** SPEC
+**Started:** 2026-06-10
+**Goal:** Make the system paper-validation-ready — define the numeric per-sleeve paper gate (PDR-004), ship the Week-10 reporting digest, harden the gateway/regime AI path, and clear low-risk operability debt — with zero deterministic-trading, risk-parameter, or SANDBOX→LIVE changes.
+
+> **Plan approved 2026-06-10** (scope as-is, 7 items). **Execution deferred:** this remote
+> environment cannot install the .NET SDK (network allowlist blocks all SDK channels), so the
+> EXECUTE/TEST/REVIEW phases must run where the build/test toolchain is available. PLAN→SPEC
+> completed here; specs in `docs/sprints/S4-specs.md`.
+
+| ID | Title | Type | Risk | Status | Post-Merge |
+|----|-------|------|------|--------|------------|
+| S4-001 | Numeric per-sleeve paper-validation thresholds (PDR-004), config-driven | feature | ⚠ | todo | n/a |
+| S4-002 | Weekly sleeve readiness scorecard vs S4-001 thresholds | feature | ⚠ | todo | n/a |
+| S4-003 | Discord rich daily report — Week-10 digest (B-004) | feature | - | todo | n/a |
+| S4-004 | Gateway jsonSchema structured-output for regime parsing (B-005) | chore | ⚠ | todo | n/a |
+| S4-005 | Discord disabled-path log level + GatewayTimeoutSeconds bound (B-006, B-008) | chore | - | todo | n/a |
+| S4-006 | Reconcile .pr-pipeline.json with repo merge policy (B-007) | chore | - | todo | n/a |
+| S4-007 | E2E SANDBOX scorecard/report smoke test (readiness path) | test | ⚠ | todo | n/a |
 
 ---
 

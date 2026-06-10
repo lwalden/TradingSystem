@@ -128,3 +128,12 @@ data/
 
 # Windows artifacts
 nul
+
+# AAM sprint/session transient state (hook-generated, local-only)
+.sprint-human-checkpoint
+.sprint-continue-signal
+.sprint-continuation.md
+.sprint-phase-guard-count
+.sprint-tool-count
+.correction-state
+.context-usage
