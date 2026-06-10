@@ -158,6 +158,46 @@ public class SleeveValidationThresholdsTests
         Assert.True(result.ProfitableOrBeatSpyPass);
     }
 
+    [Fact]
+    public void Evaluate_BarelyProfitableWhileLaggingSpy_PassesGate_ByDesign()
+    {
+        // Owner-confirmed by-design boundary (ADR-010 "Profitable OR outperform S&P 500"):
+        // a barely profitable sleeve (+0.1%) that badly lags SPY (+10%) still passes the
+        // gate — profitability alone satisfies the OR, no relative-performance requirement.
+        var sleeve = SleeveValidationThresholds.Defaults().Income;
+        var metrics = PassingMetrics();
+        metrics.TotalReturnPercent = 0.1m;
+        metrics.SpyReturnPercent = 10m;
+
+        var result = sleeve.Evaluate(metrics);
+
+        Assert.True(result.ProfitableOrBeatSpyPass);
+        Assert.Equal(ValidationOutcome.Pass, result.Outcome);
+        // Sub-flags identify WHICH condition fired: profitable yes, beats-SPY no.
+        Assert.True(result.IsNetProfitable);
+        Assert.False(result.BeatsSpy);
+    }
+
+    // --- ThresholdResult is self-contained for rationale building ---
+
+    [Fact]
+    public void Evaluate_ResultCarriesActualMetricsAndAppliedThresholdsSnapshot()
+    {
+        var sleeve = SleeveValidationThresholds.Defaults().Income;
+        sleeve.MinProfitFactor = 1.5m; // non-default value must appear in the snapshot
+        var metrics = PassingMetrics();
+
+        var result = sleeve.Evaluate(metrics);
+
+        Assert.Same(metrics, result.ActualMetrics);
+        AssertSleeveEqual(sleeve, result.AppliedThresholds);
+
+        // Snapshot semantics: mutating the thresholds after evaluation must not
+        // retroactively change the result's record of what was applied.
+        sleeve.MinProfitFactor = 9.9m;
+        Assert.Equal(1.5m, result.AppliedThresholds.MinProfitFactor);
+    }
+
     // --- Test 5: settings-seam round trip (serialization fidelity) ---
 
     [Fact]

@@ -43,9 +43,11 @@ public class SleeveThresholds
         var hitRatePass = actual.HitRatePercent >= MinHitRatePercent;
         var profitFactorPass = actual.ProfitFactor >= MinProfitFactor;
         var drawdownPass = actual.MaxDrawdownPercent <= MaxDrawdownPercent;
+        var isNetProfitable = actual.TotalReturnPercent > 0m;
+        var beatsSpy = actual.TotalReturnPercent > actual.SpyReturnPercent;
         var profitableOrBeatSpyPass = !RequireProfitableOrBeatSpy
-            || actual.TotalReturnPercent > 0m
-            || actual.TotalReturnPercent > actual.SpyReturnPercent;
+            || isNetProfitable
+            || beatsSpy;
         var weeksObservedMet = actual.WeeksObserved >= MinWeeksObserved;
 
         var outcome = !weeksObservedMet
@@ -60,10 +62,25 @@ public class SleeveThresholds
             ProfitFactorPass = profitFactorPass,
             DrawdownPass = drawdownPass,
             ProfitableOrBeatSpyPass = profitableOrBeatSpyPass,
+            IsNetProfitable = isNetProfitable,
+            BeatsSpy = beatsSpy,
             WeeksObservedMet = weeksObservedMet,
-            Outcome = outcome
+            Outcome = outcome,
+            ActualMetrics = actual,
+            AppliedThresholds = Snapshot()
         };
     }
+
+    // Copy captured at evaluation time so ThresholdResult stays self-contained even if
+    // these (mutable) thresholds are edited afterwards.
+    private SleeveThresholds Snapshot() => new()
+    {
+        MinHitRatePercent = MinHitRatePercent,
+        MinProfitFactor = MinProfitFactor,
+        MaxDrawdownPercent = MaxDrawdownPercent,
+        MinWeeksObserved = MinWeeksObserved,
+        RequireProfitableOrBeatSpy = RequireProfitableOrBeatSpy
+    };
 }
 
 /// <summary>
@@ -81,15 +98,35 @@ public class SleeveMetrics
 
 /// <summary>
 /// Per-metric pass/fail flags plus the overall validation outcome for one sleeve.
+/// Self-contained for rationale building: carries the observed metrics and a snapshot
+/// of the thresholds that were applied at evaluation time.
 /// </summary>
 public class ThresholdResult
 {
     public bool HitRatePass { get; init; }
     public bool ProfitFactorPass { get; init; }
     public bool DrawdownPass { get; init; }
+
+    // Composite SPY gate (this is the flag the outcome uses): passes when the requirement
+    // is disabled, OR the sleeve is net profitable, OR it beats SPY.
     public bool ProfitableOrBeatSpyPass { get; init; }
+
+    // Sub-flag of the SPY gate: true when TotalReturnPercent > 0 (net profitable over the
+    // window). Informational — lets consumers report WHICH condition fired the gate.
+    public bool IsNetProfitable { get; init; }
+
+    // Sub-flag of the SPY gate: true when the sleeve return STRICTLY exceeds SPY
+    // (sleeve > SPY, not >=) — owner-confirmed semantics. Informational, as above.
+    public bool BeatsSpy { get; init; }
+
     public bool WeeksObservedMet { get; init; }
     public ValidationOutcome Outcome { get; init; }
+
+    /// <summary>Observed metrics this result was evaluated against.</summary>
+    public SleeveMetrics ActualMetrics { get; init; } = new();
+
+    /// <summary>Snapshot of the thresholds applied at evaluation time.</summary>
+    public SleeveThresholds AppliedThresholds { get; init; } = new();
 }
 
 public enum ValidationOutcome
