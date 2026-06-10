@@ -300,9 +300,8 @@ Start with daily batch, assess need for intraday monitoring (especially near-exp
 **Blocking:** Nothing (independent) | **Needs:** Options sleeve proven in live trading
 Potential future addition after options sleeve is validated.
 
-### PDR-004: Sleeve-Level Validation Thresholds for Live Activation
-**Blocking:** Final go-live recommendation logic | **Needs:** Numeric pass/fail criteria by sleeve
-Define exact per-sleeve thresholds (return/risk/consistency metrics) that qualify a sleeve for live activation.
+### PDR-004: ~~Sleeve-Level Validation Thresholds for Live Activation~~ RESOLVED
+**Resolution:** Resolved in code by S4-001 (PR #81), owner-confirmed 2026-06-09 — per-sleeve paper gate: hit rate ≥45%, profit factor ≥1.3, max drawdown ≤15%, ≥12 weeks observed, profitable-OR-beat-SPY (strict >), $100k minimum live capital per sleeve. Values of record in `src/TradingSystem.Core/Configuration/SleeveValidationThresholds.cs`; evaluation-only via the `IConfigRepository` settings seam (`SleeveValidationThresholds`), never on any order/execution path; consumed by the S4-002 scorecard. PDR-005 (live sleeve set/capital split) remains pending.
 
 ### PDR-005: Initial Live Sleeve Set and Capital Split
 **Blocking:** Live transition execution plan | **Needs:** Paper validation outputs + owner decision
@@ -343,8 +342,8 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 
 | ID | Description | Impact | Logged |
 |---|---|---|---|
-| KD-001 | Discord webhook not configured | Stop alerts silently drop | 2026-02-16 |
-| KD-002 | Claude API key not provisioned | Regime service integration blocked | 2026-02-16 |
+| KD-001 | ✅ RESOLVED by S5-004 day-0 wiring (2026-06-10). ~~Discord webhook not configured~~ — webhook provisioned from Bitwarden "ClimbOn Co" into gitignored `local.settings.json`; test alert delivered (HTTP 204) through the production guard path (see `docs/paper-validation-runbook.md` Run Log) | Stop alerts silently drop — closed | 2026-02-16 |
+| KD-002 | Claude API key not provisioned — NOT required under default posture: ADR-029/030 gateway-or-rules with `DirectApiFallbackEnabled=false` means zero metered spend (gateway bearer key provisioned via S5-004). Becomes relevant only if the owner explicitly enables the metered fallback | Conditional — regime integration shipped, degrades to deterministic rules | 2026-02-16 |
 | KD-003 | Backtest pipeline paths use Python (not .NET) | Must install Python + deps separately for backtesting | 2026-04-07 |
 | KD-004 | ✅ RESOLVED 2026-05-29 (S3-001, PR #70). ~~CachingMarketDataService.cs ~360 lines, exceeds 300-line architecture-fitness threshold (grew across S2-001/003/005/006)~~ — decomposed into a 125-line facade + new 280-line MarketRegimeProvider (internal composition, no DI change, zero behavior change) per ADR-017 | Maintainability — closed | 2026-05-29 |
 
