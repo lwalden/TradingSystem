@@ -26,11 +26,15 @@ var config = Options.Create(new IBKRConfig
 
 using var service = new IBKRBrokerService(logger, config);
 
+// totalTests is coupled to the ReadinessSmokeSection.RunAsync(firstIndex: 15, ...) call
+// below: the 3 inert readiness checks occupy slots 15-17. Renumber BOTH together when
+// adding TWS tests.
 var totalTests = 17;
 var passed = 0;
 var failed = 0;
 
-Console.WriteLine($"=== IBKR Smoke Test ({totalTests} tests) ===");
+// Tests 15-17 are inert (no TWS, no live HTTP) — the count includes non-TWS checks.
+Console.WriteLine($"=== IBKR Smoke Test ({totalTests} tests; 15-17 inert — no TWS) ===");
 Console.WriteLine();
 
 // 1. Connect
@@ -407,13 +411,16 @@ Console.WriteLine();
 
 // =============================================
 // S4-007: Inert readiness path (S4-001 thresholds -> S4-002 scorecard -> S4-003 daily report)
-// All externals stubbed: no Cosmos, no live Discord POST, AI inert (no gateway key). The
-// CI-enforced twin lives in TradingSystem.Tests/Functions/SandboxReadinessSmokeTests.cs.
+// Tests 15-17 are INERT: all externals stubbed — no TWS, no Cosmos, no live Discord POST,
+// AI inert (no gateway key). The CI-enforced twin lives in
+// TradingSystem.Tests/Functions/SandboxReadinessSmokeTests.cs.
 // =============================================
 
-Console.WriteLine("--- S4-007: Readiness scorecard / daily report (inert — no TWS, no live HTTP) ---");
+Console.WriteLine("--- S4-007: Readiness scorecard / daily report (tests 15-17, inert — no TWS, no live HTTP) ---");
 Console.WriteLine();
 
+// firstIndex: 15 is coupled to totalTests = 17 at the top of this file — the 3 readiness
+// checks occupy slots 15-17. Renumber both together when adding TWS tests.
 var (readinessPassed, readinessFailed) =
     await TradingSystem.SmokeTest.ReadinessSmokeSection.RunAsync(loggerFactory, 15, totalTests);
 passed += readinessPassed;
