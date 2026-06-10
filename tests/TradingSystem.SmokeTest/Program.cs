@@ -26,7 +26,7 @@ var config = Options.Create(new IBKRConfig
 
 using var service = new IBKRBrokerService(logger, config);
 
-var totalTests = 14;
+var totalTests = 17;
 var passed = 0;
 var failed = 0;
 
@@ -402,6 +402,22 @@ catch (Exception ex)
     Console.WriteLine($"FAIL: {ex.Message}");
     failed++;
 }
+
+Console.WriteLine();
+
+// =============================================
+// S4-007: Inert readiness path (S4-001 thresholds -> S4-002 scorecard -> S4-003 daily report)
+// All externals stubbed: no Cosmos, no live Discord POST, AI inert (no gateway key). The
+// CI-enforced twin lives in TradingSystem.Tests/Functions/SandboxReadinessSmokeTests.cs.
+// =============================================
+
+Console.WriteLine("--- S4-007: Readiness scorecard / daily report (inert — no TWS, no live HTTP) ---");
+Console.WriteLine();
+
+var (readinessPassed, readinessFailed) =
+    await TradingSystem.SmokeTest.ReadinessSmokeSection.RunAsync(loggerFactory, 15, totalTests);
+passed += readinessPassed;
+failed += readinessFailed;
 
 Console.WriteLine();
 
