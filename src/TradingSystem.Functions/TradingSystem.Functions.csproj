@@ -25,6 +25,13 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
     <PackageReference Include="Azure.Identity" Version="1.18.0" />
     <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.0" />
+    <!-- S5-004r: the S5-005 OpenTelemetry.Api 1.15.3 pin that used to live here was REMOVED,
+         not lost. The vulnerable transitive chain it patched (GHSA-g94r-2vxg-569j, via
+         ApplicationInsights.WorkerService 3.0.0 -> Azure.Monitor.OpenTelemetry.Exporter) does
+         not exist on the classic 2.23.0 line above — a transitive vulnerability scan
+         (dotnet list package, vulnerable + include-transitive) is clean without it. If
+         WorkerService is ever upgraded back to 3.x (see DECISIONS.md Known Debt),
+         re-evaluate whether an OTel pin is needed. -->
   </ItemGroup>
   
   <ItemGroup>
