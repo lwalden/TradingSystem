@@ -75,13 +75,26 @@ public class ClaudeService : IClaudeService
     public async Task<string> AnalyzeAsync(AIAnalysisRequest request,
         CancellationToken cancellationToken = default)
     {
+        var (content, _) = await AnalyzeCoreAsync(request, cancellationToken);
+        return content;
+    }
+
+    /// <summary>
+    /// Shared gateway-then-direct pipeline. Returns the response content AND which leg produced
+    /// it, because the two legs have different content shapes when a JsonSchema is supplied:
+    /// the gateway returns a schema-conforming JSON string (S4-004), while the direct Anthropic
+    /// API always returns plain text that may merely embed JSON (legacy brace-scan territory).
+    /// </summary>
+    private async Task<(string Content, bool FromGateway)> AnalyzeCoreAsync(
+        AIAnalysisRequest request, CancellationToken cancellationToken)
+    {
         _logger.LogInformation("AI analysis request. Strategy: {StrategyId}",
             request.StrategyId);
 
         // Try gateway first (CLI-based, subscription pricing)
         var gatewayResult = await TryGatewayAsync(request, cancellationToken);
         if (gatewayResult != null)
-            return gatewayResult;
+            return (gatewayResult, true);
 
         // Gateway miss. The metered direct API is the only remaining path, and it ships OFF by
         // default. When disabled, do NOT touch the cap and do NOT call Anthropic — return no
@@ -91,7 +104,7 @@ public class ClaudeService : IClaudeService
         {
             _logger.LogWarning(
                 "Direct API fallback disabled; gateway miss → deterministic rules");
-            return string.Empty;
+            return (string.Empty, false);
         }
 
         // Fallback enabled — the only remaining path is the metered direct API.
@@ -104,13 +117,13 @@ public class ClaudeService : IClaudeService
             _logger.LogWarning(
                 "Daily metered-API cap {Max} reached; refusing direct call, falling back to rules",
                 max);
-            return string.Empty;
+            return (string.Empty, false);
         }
 
         _logger.LogWarning(
             "Claude gateway unavailable; falling back to METERED direct API. DirectCallsToday={Count}/{Max}",
             count, max);
-        return await CallAnthropicApiAsync(request, cancellationToken);
+        return (await CallAnthropicApiAsync(request, cancellationToken), false);
     }
 
     /// <summary>
@@ -143,10 +156,39 @@ public class ClaudeService : IClaudeService
         }
     }
 
+    // Gateway structured output (jsonSchema) responses use the schema's camelCase property
+    // names; DTOs are PascalCase. Case-insensitive matching applies ONLY to the structured
+    // gateway leg — the legacy brace-scan path keeps default (case-sensitive) options.
+    private static readonly JsonSerializerOptions StructuredOutputOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     public async Task<T> AnalyzeAsync<T>(AIAnalysisRequest request,
         CancellationToken cancellationToken = default) where T : class
     {
-        var response = await AnalyzeAsync(request, cancellationToken);
+        var (response, fromGateway) = await AnalyzeCoreAsync(request, cancellationToken);
+
+        // S4-004 (B-005): with a JsonSchema, the gateway's `response` field IS the JSON document
+        // (a string conforming to the schema) — deserialize it whole, no brace-scanning. Any
+        // parse failure is surfaced as InvalidOperationException so the caller's existing
+        // try/catch falls back to deterministic rules (ADR-029/030), never a silent default.
+        // The direct-API leg never honors jsonSchema, so its responses (and empty no-content
+        // seams) stay on the legacy brace-scan path below.
+        if (fromGateway && request.JsonSchema is not null)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<T>(response, StructuredOutputOptions)
+                    ?? throw new InvalidOperationException(
+                        "Gateway structured response deserialized to null");
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    "Gateway structured response was not valid JSON for the requested type", ex);
+            }
+        }
 
         var jsonStart = response.IndexOf('{');
         var jsonEnd = response.LastIndexOf('}');
@@ -173,14 +215,21 @@ public class ClaudeService : IClaudeService
 
         try
         {
+            // Dictionary (not an anonymous type) so the optional `jsonSchema` field is OMITTED
+            // entirely when no schema is supplied — the gateway treats its presence as the
+            // structured-output switch, so serializing `"jsonSchema": null` is not equivalent.
+            var body = new Dictionary<string, object?>
+            {
+                ["prompt"] = request.UserPrompt,
+                ["system"] = request.SystemPrompt,
+                ["model"] = request.PreferredModel ?? _config.Model
+            };
+            if (request.JsonSchema is not null)
+                body["jsonSchema"] = request.JsonSchema;
+
             var gatewayRequest = new HttpRequestMessage(HttpMethod.Post, "ask")
             {
-                Content = JsonContent.Create(new
-                {
-                    prompt = request.UserPrompt,
-                    system = request.SystemPrompt,
-                    model = request.PreferredModel ?? _config.Model
-                })
+                Content = JsonContent.Create(body)
             };
             gatewayRequest.Headers.Add("Authorization", $"Bearer {_config.GatewayApiKey}");
 

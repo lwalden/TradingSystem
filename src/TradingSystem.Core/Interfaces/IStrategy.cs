@@ -84,6 +84,15 @@ public class AIAnalysisRequest
     public Dictionary<string, object> Context { get; set; } = new();
     public int MaxTokens { get; set; } = 2000;
     public string PreferredModel { get; set; } = "claude-sonnet-4-20250514";
+
+    /// <summary>
+    /// Optional JSON Schema (serialized as the gateway's <c>jsonSchema</c> request field) that
+    /// enforces structured output on the gateway leg (S4-004 / B-005). When set, the gateway's
+    /// 200-body <c>response</c> field is a JSON string conforming to this schema and is
+    /// deserialized directly — no brace-scanning. Null preserves legacy plain-text behavior.
+    /// The direct Anthropic API leg ignores this field entirely.
+    /// </summary>
+    public object? JsonSchema { get; set; }
 }
 
 public enum StrategyType
