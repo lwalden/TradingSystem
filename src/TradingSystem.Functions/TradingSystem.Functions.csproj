@@ -21,6 +21,13 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
     <PackageReference Include="Azure.Identity" Version="1.18.0" />
     <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.0" />
+    <!-- Transitive lift: GHSA-g94r-2vxg-569j (OpenTelemetry.Api < 1.15.3, excessive memory
+         allocation parsing propagation headers). Pulled in at 1.15.0 via
+         Microsoft.ApplicationInsights.WorkerService 3.0.0 -> Azure.Monitor.OpenTelemetry.Exporter.
+         Pinned to the first patched version; remove once ApplicationInsights.WorkerService ships
+         a patched chain. Tests and SmokeTest inherit this pin via their project reference to
+         Functions — if either drops that reference, it needs its own pin. -->
+    <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
   </ItemGroup>
   
   <ItemGroup>
