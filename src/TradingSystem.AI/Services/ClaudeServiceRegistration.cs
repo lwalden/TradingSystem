@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
 
@@ -40,10 +41,23 @@ public static class ClaudeServiceRegistration
 
         // Named gateway client — separate HTTP target, gateway timeout so a hung gateway falls back
         // fast. Base/timeout bound from config so they track ADR-029 without code edits.
-        services.AddHttpClient(ClaudeService.GatewayClientName, c =>
+        // B-008: the timeout is clamped to ClaudeConfig.MaxGatewayTimeoutSeconds with a warning, so
+        // a config typo (e.g. 3500 for 35) degrades loudly to a bounded wait instead of parking the
+        // gateway leg for minutes — or crashing the host, which is why this clamps rather than throws.
+        services.AddHttpClient(ClaudeService.GatewayClientName, (sp, c) =>
         {
+            if (config.GatewayTimeoutSeconds > ClaudeConfig.MaxGatewayTimeoutSeconds)
+            {
+                sp.GetService<ILoggerFactory>()
+                    ?.CreateLogger(typeof(ClaudeServiceRegistration))
+                    .LogWarning(
+                        "Claude:GatewayTimeoutSeconds={Configured} exceeds the upper bound; clamping to {Max}s. Fix the configuration value.",
+                        config.GatewayTimeoutSeconds,
+                        ClaudeConfig.MaxGatewayTimeoutSeconds);
+            }
+
             c.BaseAddress = new Uri(config.GatewayBaseUrl);
-            c.Timeout = TimeSpan.FromSeconds(config.GatewayTimeoutSeconds);
+            c.Timeout = TimeSpan.FromSeconds(config.ClampedGatewayTimeoutSeconds);
         });
 
         // Direct Anthropic typed client — 60s default timeout is intentional and unchanged.

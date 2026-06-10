@@ -465,6 +465,88 @@ public class ClaudeServiceTests
         Assert.Equal(35, bound.GatewayTimeoutSeconds);
     }
 
+    // ---- S4-005 (B-008): GatewayTimeoutSeconds upper-bound clamp ----
+
+    // Captures every log entry emitted through the DI logging pipeline so registration-time
+    // warnings (e.g. the timeout clamp) can be asserted without Moq-ing ILogger<T> categories.
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(Entries);
+        public void Dispose() { }
+
+        private sealed class CapturingLogger : ILogger
+        {
+            private readonly List<(LogLevel, string)> _entries;
+            public CapturingLogger(List<(LogLevel, string)> entries) => _entries = entries;
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+                Exception? exception, Func<TState, Exception?, string> formatter)
+                => _entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
+
+    private static (ServiceProvider Provider, CapturingLoggerProvider Logs)
+        BuildGatewayRegistration(string timeoutSeconds)
+    {
+        var services = new ServiceCollection();
+        var capture = new CapturingLoggerProvider();
+        services.AddLogging(b => b.AddProvider(capture));
+        var config = BuildConfig(
+            ("Claude:GatewayApiKey", "gw-token"),
+            ("Claude:GatewayBaseUrl", "http://localhost:3131/"),
+            ("Claude:GatewayTimeoutSeconds", timeoutSeconds));
+        ClaudeServiceRegistration.Add(services, config);
+        return (services.BuildServiceProvider(), capture);
+    }
+
+    [Fact]
+    public void GatewayTimeout_AboveMax_ClampsToMax_AndWarns()
+    {
+        // B-008: a fat-fingered timeout (e.g. 600s) must not produce a multi-minute hung gateway
+        // leg. The registration clamps the named-client timeout to MaxGatewayTimeoutSeconds and
+        // emits a warning — clamp, not throw, so a config typo degrades loudly instead of
+        // crashing the Functions host (fails toward availability).
+        var (provider, logs) = BuildGatewayRegistration("600");
+
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ClaudeService.GatewayClientName);
+
+        Assert.Equal(TimeSpan.FromSeconds(ClaudeConfig.MaxGatewayTimeoutSeconds), client.Timeout);
+        Assert.Equal(120, ClaudeConfig.MaxGatewayTimeoutSeconds);
+        Assert.Contains(logs.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("600") &&
+            e.Message.Contains("120"));
+    }
+
+    [Fact]
+    public void GatewayTimeout_AboveMax_StillYieldsUsableClaudeService()
+    {
+        // The clamp must fail toward availability: an out-of-range value still resolves a working
+        // IClaudeService rather than throwing at startup.
+        var (provider, _) = BuildGatewayRegistration("9999");
+
+        Assert.NotNull(provider.GetService<IClaudeService>());
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ClaudeService.GatewayClientName);
+        Assert.True(client.Timeout <= TimeSpan.FromSeconds(ClaudeConfig.MaxGatewayTimeoutSeconds));
+    }
+
+    [Fact]
+    public void GatewayTimeout_InRange_Unchanged_NoWarning()
+    {
+        // Regression guard: the 35s default posture passes through untouched and silently.
+        var (provider, logs) = BuildGatewayRegistration("35");
+
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ClaudeService.GatewayClientName);
+
+        Assert.Equal(TimeSpan.FromSeconds(35), client.Timeout);
+        Assert.DoesNotContain(logs.Entries, e => e.Level == LogLevel.Warning);
+    }
+
     [Fact]
     public void Ctor_GatewayKeyPresent_FallbackOff_LogsGatewayOnlyPosture()
     {
