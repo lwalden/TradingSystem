@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -21,15 +20,8 @@ namespace TradingSystem.Functions;
 /// </summary>
 public class DiscordRiskAlertService : IRiskAlertService
 {
-    // Webhooks must be on Discord's domain over https; the path segment carries the secret token.
-    private static readonly string[] AllowedWebhookHosts = { "discord.com", "discordapp.com" };
-
-    // Fallback backoff (seconds) when a 429 carries no usable Retry-After / reset header.
-    private const double BaseBackoffSeconds = 1.0;
-
-    // Sane upper bound on a single 429 wait, so a hostile/huge Retry-After can never request an
-    // unbounded sleep even if the cumulative budget were misconfigured high.
-    private const double MaxRetryAfterSeconds = 60.0;
+    // Host allow-list / redaction and 429 header parsing live in DiscordWebhookGuard (S4-003
+    // refactor — shared verbatim with DiscordDailyReportService, behavior unchanged).
 
     // Retries are bounded by BOTH a retry count and a cumulative wait budget.
     private const int MaxRetries = 3;
@@ -121,7 +113,7 @@ public class DiscordRiskAlertService : IRiskAlertService
 
         // Host allow-list + scheme check. On rejection only a redacted {scheme}://{host} (or an
         // <empty>/<malformed> sentinel) is logged — never the token-bearing path.
-        if (!TryValidateWebhook(_config.WebhookUrl, out var redacted))
+        if (!DiscordWebhookGuard.TryValidateWebhook(_config.WebhookUrl, out var redacted))
         {
             _logger.LogWarning(
                 "Discord webhook URL is not an allowed https Discord endpoint ({Redacted}); skipping alert: {Title}",
@@ -208,7 +200,7 @@ public class DiscordRiskAlertService : IRiskAlertService
                 // remaining > 0 is guaranteed here (we returned above otherwise). A Retry-After of
                 // 0 is a valid "retry now", so a zero wait still makes progress; keep it
                 // non-negative and proceed to retry.
-                var wait = Math.Max(0, Math.Min(RetryAfterSeconds(response), remaining));
+                var wait = Math.Max(0, Math.Min(DiscordWebhookGuard.RetryAfterSeconds(response), remaining));
 
                 _logger.LogWarning(
                     "Discord rate-limited (429); retrying alert {Title} after {WaitSeconds:F2}s (attempt {Attempt}/{Max})",
@@ -242,71 +234,4 @@ public class DiscordRiskAlertService : IRiskAlertService
         }
     }
 
-    // Validates the webhook URL against the host allow-list and https scheme. On success
-    // <paramref name="redactedForLog"/> is {scheme}://{host}; on failure it is the same redacted
-    // form (or an <empty>/<malformed> sentinel) so the token in the path can never reach a log.
-    private static bool TryValidateWebhook(string url, out string redactedForLog)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            redactedForLog = "<empty>";
-            return false;
-        }
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
-        {
-            redactedForLog = "<malformed>";
-            return false;
-        }
-
-        // Redact to scheme+host only — the path segment carries the webhook secret token.
-        redactedForLog = $"{uri.Scheme}://{uri.Host}";
-
-        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var host = uri.Host;
-        foreach (var allowed in AllowedWebhookHosts)
-        {
-            if (string.Equals(host, allowed, StringComparison.OrdinalIgnoreCase) ||
-                host.EndsWith("." + allowed, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Seconds to wait for a 429, tolerant of missing/garbage headers. Prefers Retry-After
-    // (seconds), falls back to Discord's X-RateLimit-Reset-After (float seconds), then the base
-    // backoff. Any unparseable value degrades to the base backoff. The result is clamped to
-    // MaxRetryAfterSeconds so an adversarial/huge header can never request an unbounded wait.
-    private static double RetryAfterSeconds(HttpResponseMessage response)
-    {
-        foreach (var name in new[] { "Retry-After", "X-RateLimit-Reset-After" })
-        {
-            if (!response.Headers.TryGetValues(name, out var values))
-            {
-                continue;
-            }
-
-            var raw = values.FirstOrDefault();
-            if (raw == null)
-            {
-                continue;
-            }
-
-            if (double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) &&
-                !double.IsNaN(value) &&
-                value >= 0)
-            {
-                return Math.Min(value, MaxRetryAfterSeconds);
-            }
-        }
-
-        return BaseBackoffSeconds;
-    }
 }

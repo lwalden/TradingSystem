@@ -58,6 +58,10 @@ var host = new HostBuilder()
         services.AddSingleton<IMarketDataService, CachingMarketDataService>();
         services.AddHttpClient("DiscordRiskAlerts");
         services.AddSingleton<IRiskAlertService, TradingSystem.Functions.DiscordRiskAlertService>();
+        // S4-003: daily digest reuses the SAME webhook/config as risk alerts (no new secret) but
+        // gets its own named client so the two senders' handlers/telemetry stay distinguishable.
+        services.AddHttpClient("DiscordDailyReport");
+        services.AddSingleton<IDailyReportService, TradingSystem.Functions.DiscordDailyReportService>();
         services.AddSingleton<IRiskManager, RiskManager>();
         services.AddSingleton<IExecutionService, SimpleExecutionService>();
         services.AddSingleton<OptionsExecutionService>();
@@ -67,6 +71,12 @@ var host = new HostBuilder()
         services.AddSingleton<ISignalRepository, JsonSignalRepository>();
         services.AddSingleton<ISnapshotRepository, JsonSnapshotRepository>();
         services.AddSingleton<IOptionsPositionRepository, JsonOptionsPositionRepository>();
+        services.AddSingleton<ITradeRepository, JsonTradeRepository>();
+        services.AddSingleton<IConfigRepository, JsonConfigRepository>();
+
+        // S4-002 readiness scorecards (read-only, recommendation-only) — consumed by the
+        // S4-003 daily report's optional readiness section.
+        services.AddSingleton<ISleeveReadinessScorecardService, SleeveReadinessScorecardService>();
 
         // External data clients/services
         services.AddHttpClient<PolygonApiClient>();
