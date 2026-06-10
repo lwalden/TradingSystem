@@ -17,6 +17,12 @@ public class DailyOrchestrator
     private readonly TradingSystemConfig _config;
     private readonly IServiceProvider _serviceProvider;
 
+    // S5-003 alert-spam guard (Default D6): once per run per failure category, keyed
+    // runId:category. Each timer fires once/day with a fresh runId, so this stays tiny over a
+    // long-lived instance; the lock is belt-and-braces (the two timers never overlap).
+    private readonly object _alertGateLock = new();
+    private readonly HashSet<string> _alertedRunCategories = new(StringComparer.Ordinal);
+
     public DailyOrchestrator(
         ILogger<DailyOrchestrator> logger,
         IOptions<TradingSystemConfig> config,
@@ -48,6 +54,17 @@ public class DailyOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Pre-market orchestration failed. RunId: {RunId}", runId);
+
+            // S5-003: operational orchestration-failure alert BEFORE the rethrow (App Insights
+            // failure signal preserved). Exception TYPE NAME only — messages can echo
+            // URIs/secrets. CancellationToken.None: a cancelled run must still be able to alert.
+            await TrySendOperationalAlertAsync(
+                runId,
+                "orchestration-failure",
+                "Orchestration Run Failure — Pre-Market",
+                $"Unhandled {ex.GetType().Name} during the pre-market run. RunId: {runId}. See Application Insights for details.",
+                CancellationToken.None);
+
             throw;
         }
     }
@@ -97,6 +114,17 @@ public class DailyOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "End-of-day processing failed. RunId: {RunId}", runId);
+
+            // S5-003: operational orchestration-failure alert BEFORE the rethrow (App Insights
+            // failure signal preserved). Exception TYPE NAME only — messages can echo
+            // URIs/secrets. CancellationToken.None: a cancelled run must still be able to alert.
+            await TrySendOperationalAlertAsync(
+                runId,
+                "orchestration-failure",
+                "Orchestration Run Failure — End of Day",
+                $"Unhandled {ex.GetType().Name} during the end-of-day run. RunId: {runId}. See Application Insights for details.",
+                CancellationToken.None);
+
             throw;
         }
     }
@@ -114,6 +142,16 @@ public class DailyOrchestrator
         if (!connected)
         {
             _logger.LogWarning("Could not connect to broker. Skipping options sleeve. RunId: {RunId}", runId);
+
+            // S5-003: operational connect-failure alert (best-effort, once per run — Default D6).
+            // The degrade itself is unchanged: options sleeve skipped, no throw.
+            await TrySendOperationalAlertAsync(
+                runId,
+                "connect-failure",
+                "Broker Connect Failure — Pre-Market",
+                $"Could not connect to the broker for the pre-market run. Options sleeve skipped. RunId: {runId}.",
+                cancellationToken);
+
             return;
         }
 
@@ -157,6 +195,53 @@ public class DailyOrchestrator
         finally
         {
             await broker.DisconnectAsync();
+        }
+    }
+
+    /// <summary>
+    /// S5-003 best-effort operational alert: null-tolerant resolve (same style as the other
+    /// optional services), never throws (alert failure must never fail or replace the run's
+    /// outcome), gated to once per run per failure category (Default D6). Exception TYPE NAMES
+    /// only ever reach logs here — never messages, which can echo URIs/secrets.
+    /// </summary>
+    private async Task TrySendOperationalAlertAsync(
+        string runId,
+        string category,
+        string title,
+        string description,
+        CancellationToken cancellationToken)
+    {
+        var operationalAlerts = _serviceProvider.GetService<IOperationalAlertService>();
+        if (operationalAlerts == null)
+            return;
+
+        bool claimed;
+        lock (_alertGateLock)
+        {
+            claimed = _alertedRunCategories.Add($"{runId}:{category}");
+        }
+
+        if (!claimed)
+        {
+            _logger.LogDebug(
+                "Operational alert already sent for this run/category; skipping. RunId: {RunId}, Category: {Category}",
+                runId,
+                category);
+            return;
+        }
+
+        try
+        {
+            await operationalAlerts.SendOperationalAlertAsync(title, description, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Observability must never become control: swallow and log (type name only).
+            _logger.LogWarning(
+                "Operational alert send failed ({ErrorType}); orchestration outcome unaffected. RunId: {RunId}, Category: {Category}",
+                ex.GetType().Name,
+                runId,
+                category);
         }
     }
 

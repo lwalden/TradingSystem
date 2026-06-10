@@ -11,7 +11,7 @@ namespace TradingSystem.Functions;
 ///
 /// Failure contract (Defaults D3/D4):
 /// - Broker connect failure: NO snapshot written, no throw — returns a structured failure
-///   result (S5-003 alerts on it).
+///   result and sends a best-effort operational connect-failure alert (S5-003, once per run).
 /// - Enrichment failure: warning only; the RiskManager-persisted base snapshot is kept.
 /// - Unexpected exceptions propagate (the timer wrapper logs + rethrows for App Insights).
 /// </summary>
@@ -23,6 +23,13 @@ public class EndOfDayService : IEndOfDayService
     private readonly ISnapshotRepository? _snapshotRepository;
     private readonly ITradeRepository? _tradeRepository;
     private readonly IMarketDataService? _marketDataService;
+    private readonly IOperationalAlertService? _operationalAlertService;
+
+    // S5-003 alert-spam guard (Default D6): once per run per failure category, keyed
+    // runId:category. Each timer fires once/day with a fresh runId, so this stays tiny over a
+    // long-lived singleton; the lock is belt-and-braces (EOD runs never overlap in practice).
+    private readonly object _alertGateLock = new();
+    private readonly HashSet<string> _alertedRunCategories = new(StringComparer.Ordinal);
 
     public EndOfDayService(
         IBrokerService broker,
@@ -30,7 +37,8 @@ public class EndOfDayService : IEndOfDayService
         ILogger<EndOfDayService> logger,
         ISnapshotRepository? snapshotRepository = null,
         ITradeRepository? tradeRepository = null,
-        IMarketDataService? marketDataService = null)
+        IMarketDataService? marketDataService = null,
+        IOperationalAlertService? operationalAlertService = null)
     {
         _broker = broker;
         _riskManager = riskManager;
@@ -38,6 +46,7 @@ public class EndOfDayService : IEndOfDayService
         _snapshotRepository = snapshotRepository;
         _tradeRepository = tradeRepository;
         _marketDataService = marketDataService;
+        _operationalAlertService = operationalAlertService;
     }
 
     public async Task<EndOfDayResult> RunAsync(string runId, CancellationToken cancellationToken = default)
@@ -52,6 +61,15 @@ public class EndOfDayService : IEndOfDayService
                 "Could not connect to broker at end-of-day. No snapshot will be written. RunId: {RunId}. " +
                 "Verify TWS/IB Gateway is running and the API port/client-id match config.",
                 runId);
+
+            // S5-003: operational connect-failure alert (best-effort, once per run — Default D6).
+            await TrySendOperationalAlertAsync(
+                runId,
+                "connect-failure",
+                "Broker Connect Failure — End of Day",
+                $"Could not connect to the broker for the end-of-day run. No snapshot was written. RunId: {runId}.",
+                cancellationToken);
+
             return result;
         }
 
@@ -83,6 +101,51 @@ public class EndOfDayService : IEndOfDayService
         finally
         {
             await _broker.DisconnectAsync();
+        }
+    }
+
+    /// <summary>
+    /// S5-003 best-effort operational alert: never throws (alert failure must never fail the
+    /// run), gated to once per run per failure category (Default D6). Exception TYPE NAMES only
+    /// ever reach logs here — never messages, which can echo URIs/secrets.
+    /// </summary>
+    private async Task TrySendOperationalAlertAsync(
+        string runId,
+        string category,
+        string title,
+        string description,
+        CancellationToken cancellationToken)
+    {
+        if (_operationalAlertService == null)
+            return;
+
+        bool claimed;
+        lock (_alertGateLock)
+        {
+            claimed = _alertedRunCategories.Add($"{runId}:{category}");
+        }
+
+        if (!claimed)
+        {
+            _logger.LogDebug(
+                "Operational alert already sent for this run/category; skipping. RunId: {RunId}, Category: {Category}",
+                runId,
+                category);
+            return;
+        }
+
+        try
+        {
+            await _operationalAlertService.SendOperationalAlertAsync(title, description, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Observability must never become control: swallow and log (type name only).
+            _logger.LogWarning(
+                "Operational alert send failed ({ErrorType}); end-of-day run continues unaffected. RunId: {RunId}, Category: {Category}",
+                ex.GetType().Name,
+                runId,
+                category);
         }
     }
 
