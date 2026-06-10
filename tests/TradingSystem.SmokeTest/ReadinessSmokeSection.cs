@@ -24,6 +24,9 @@ namespace TradingSystem.SmokeTest;
 /// </summary>
 internal static class ReadinessSmokeSection
 {
+    // Rolling DateTime.Today is deliberate here: this is the MANUAL console harness, where
+    // current-day realism is wanted (the seeded windows are built relative to AsOf, so any
+    // run day works). The CI xUnit twin pins AsOf = 2026-06-08 instead, for determinism.
     private static readonly DateTime AsOf = DateTime.Today;
 
     /// <summary>Runs the three readiness smoke checks, numbered from <paramref name="firstIndex"/>.</summary>
@@ -92,7 +95,8 @@ internal static class ReadinessSmokeSection
             if (!body.Contains("Daily Report") || !body.Contains("Readiness"))
                 throw new InvalidOperationException(
                     $"report payload missing summary or readiness embed; body[..200]: {body[..Math.Min(200, body.Length)]}");
-            Console.WriteLine($"  OK: payload captured by stub handler ({body.Length} chars), summary + readiness embeds present");
+            Console.WriteLine($"  OK: payload captured by stub handler ({body.Length} chars)");
+            Console.WriteLine("  OK: summary + readiness embeds present");
             Console.WriteLine("  OK: no live Discord POST (HTTP terminated at in-memory stub)");
             passed++;
         }
@@ -114,7 +118,7 @@ internal static class ReadinessSmokeSection
                 loggerFactory.CreateLogger<ClaudeService>(),
                 Options.Create(new ClaudeConfig
                 {
-                    ApiKey = "smoke-key-never-used",
+                    ApiKey = "test-key",
                     GatewayApiKey = string.Empty,
                     Model = "claude-sonnet-4-20250514",
                     MaxDirectApiCallsPerDay = 50

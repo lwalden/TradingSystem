@@ -219,6 +219,50 @@ public class SandboxReadinessSmokeTests
     }
 
     // ========================================================================================
+    // 6b. Log scrub: the fake webhook token must never leak into ANY log line emitted by the
+    //     report service across the smoke runs — permanent token-leak tripwire on the report
+    //     path (mirrors the redaction assertions in DiscordDailyReportServiceTests).
+    // ========================================================================================
+    [Fact]
+    public async Task Smoke_LogScrub_FakeWebhookTokenNeverLogged()
+    {
+        var fx = new SmokeFixture();
+
+        await fx.ScorecardService.GenerateAsync(AsOf);
+        await fx.ReportService.SendDailyReportAsync(AsOf);
+        // Disabled path too — its skip log must also be clean.
+        var disabled = new SmokeFixture(discordEnabled: false);
+        await disabled.ReportService.SendDailyReportAsync(AsOf);
+
+        foreach (var logger in new[] { fx.ReportLogger, disabled.ReportLogger })
+        {
+            var logs = AllLogArgStrings(logger).ToList();
+            Assert.DoesNotContain(logs, s => s.Contains("inert-smoke-token"));
+            Assert.DoesNotContain(logs, s => s.Contains("/api/webhooks/123"));
+        }
+    }
+
+    // ========================================================================================
+    // 6c. CountingConfigRepository write-then-read: SaveConfigAsync must persist the written
+    //     config (not silently drop it) while still counting — a drop-on-save stub could mask
+    //     a write-then-read bug in a future smoke extension.
+    // ========================================================================================
+    [Fact]
+    public async Task Smoke_CountingConfigRepository_SaveConfigPersistsForReadBack()
+    {
+        var fx = new SmokeFixture();
+        var modified = new TradingSystemConfig { Mode = TradingMode.Sandbox };
+        Assert.NotSame(fx.SystemConfig, modified);
+
+        await fx.ConfigRepo.SaveConfigAsync(modified);
+
+        Assert.Same(modified, await fx.ConfigRepo.GetConfigAsync());
+        Assert.Equal(1, fx.ConfigRepo.SaveConfigCount);
+        // Safety posture intact: the persisted config is still SANDBOX.
+        Assert.Equal(TradingMode.Sandbox, (await fx.ConfigRepo.GetConfigAsync()).Mode);
+    }
+
+    // ========================================================================================
     // 7. Suite-green guard: the fixture is structurally CI-safe — fakes/stubs only, no TWS,
     //    no live HTTP, no Cosmos; Mode is Sandbox and never Live.
     // ========================================================================================
@@ -258,6 +302,9 @@ public class SandboxReadinessSmokeTests
         public ISnapshotRepository SnapshotRepository { get; }
         public ITradeRepository TradeRepository { get; }
         public RecordingHandler DiscordHandler { get; } = new();
+        // Capturing logger (vs NullLogger) so the log-scrub test can assert the fake webhook
+        // token never appears in anything the report service logs.
+        public Mock<ILogger<DiscordDailyReportService>> ReportLogger { get; } = new();
         public Mock<IBrokerService> Broker { get; } = new(MockBehavior.Strict);
         public Mock<IOrderRepository> OrderRepository { get; } = new(MockBehavior.Strict);
         public Mock<ISignalRepository> SignalRepository { get; } = new(MockBehavior.Strict);
@@ -288,7 +335,7 @@ public class SandboxReadinessSmokeTests
                 }),
                 SnapshotRepository,
                 TradeRepository,
-                NullLogger<DiscordDailyReportService>.Instance,
+                ReportLogger.Object,
                 ScorecardService);
         }
 
@@ -364,6 +411,23 @@ public class SandboxReadinessSmokeTests
         }
     }
 
+    // Every string-shaped argument across every logger invocation, including the message
+    // template and structured args, so a token leak anywhere is caught (mirrors
+    // DiscordDailyReportServiceTests.AllLogArgStrings).
+    private static IEnumerable<string> AllLogArgStrings(Mock<ILogger<DiscordDailyReportService>> logger)
+    {
+        foreach (var inv in logger.Invocations)
+        {
+            if (inv.Method.Name != nameof(ILogger.Log))
+                continue;
+            foreach (var arg in inv.Arguments)
+            {
+                if (arg == null) continue;
+                yield return arg.ToString() ?? string.Empty;
+            }
+        }
+    }
+
     // Records every webhook POST (URI + body, captured at send time) and returns 204 — the
     // Discord leg structurally cannot reach the network.
     private sealed class RecordingHandler : HttpMessageHandler
@@ -395,7 +459,7 @@ public class SandboxReadinessSmokeTests
     // recommendation-only and no-LIVE-switch invariants are independently assertable.
     private sealed class CountingConfigRepository : IConfigRepository
     {
-        private readonly TradingSystemConfig _config;
+        private TradingSystemConfig _config;
         private readonly Dictionary<string, object> _settings = new();
 
         public int SaveConfigCount { get; private set; }
@@ -419,6 +483,10 @@ public class SandboxReadinessSmokeTests
         public Task SaveConfigAsync(TradingSystemConfig config, CancellationToken ct = default)
         {
             SaveConfigCount++;
+            // Persist the write so read-back reflects it — a drop-on-save stub could mask a
+            // write-then-read bug in a future smoke extension. Counting still proves the
+            // recommendation-only invariant (the readiness path must never call this).
+            _config = config;
             return Task.CompletedTask;
         }
 
