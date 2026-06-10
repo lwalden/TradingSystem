@@ -73,7 +73,10 @@ var host = new HostBuilder()
             sp.GetRequiredService<TradingSystem.Functions.DiscordRiskAlertService>());
         // S4-003: daily digest reuses the SAME webhook/config as risk alerts (no new secret) but
         // gets its own named client so the two senders' handlers/telemetry stay distinguishable.
-        services.AddHttpClient("DiscordDailyReport");
+        // S5-002: same 8s bound as DiscordRiskAlerts above — this POST now sits on the EOD timer
+        // path, and a hung report send must never stall the run (timeout surfaces as
+        // OperationCanceledException and is swallowed by the report's no-throw contract).
+        services.AddHttpClient("DiscordDailyReport", c => c.Timeout = TimeSpan.FromSeconds(8));
         services.AddSingleton<IDailyReportService, TradingSystem.Functions.DiscordDailyReportService>();
         services.AddSingleton<IRiskManager, RiskManager>();
         // S5-001: end-of-day pipeline — delegates the sync/stop-check/base-snapshot spine to

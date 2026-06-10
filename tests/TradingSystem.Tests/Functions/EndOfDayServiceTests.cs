@@ -30,8 +30,11 @@ public class EndOfDayServiceTests
             new Trade { Commission = 1.5m, RealizedPnL = 100m, EntryTime = Today, ExitTime = Today },
             new Trade { Commission = 2.0m, RealizedPnL = null, EntryTime = Today, ExitTime = null });
         var marketData = CreateMarketDataMock(spy: 512.34m, vix: 18.5m, RegimeType.Cautious);
+        // Fully-wired happy path includes the report service — a missing registration now
+        // surfaces as a result warning (review S5-002), so zero-warnings means ALL wired.
+        var report = new RecordingDailyReportService(snapshots);
 
-        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData);
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData, report: report);
         var result = await service.RunAsync("run-1", CancellationToken.None);
 
         Assert.True(result.BrokerConnected);
@@ -322,6 +325,28 @@ public class EndOfDayServiceTests
         Assert.False(result.SnapshotPersisted);
         Assert.NotEmpty(result.Warnings);
         Assert.Empty(report.Dates);
+    }
+
+    [Fact]
+    public async Task RunAsync_NoDailyReportService_RunSucceedsAndWarningSurfaced()
+    {
+        // Review S5-002: an unregistered IDailyReportService must be VISIBLE (warning on the
+        // result, matching the ISnapshotRepository pattern), not a silent Debug-level skip —
+        // otherwise a wiring regression looks identical to a healthy run.
+        var snapshots = new CountingSnapshotRepository(
+            PriorDaySnapshot(netLiq: 100_000m));
+        var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(101_000m));
+        var trades = CreateTradeRepoMock();
+        var marketData = CreateMarketDataMock(spy: 500m, vix: 15m, RegimeType.RiskOn);
+
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData, report: null);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        // The run itself still succeeds end-to-end — the missing report service only warns.
+        Assert.True(result.SnapshotPersisted);
+        Assert.True(result.SnapshotEnriched);
+        Assert.Contains(result.Warnings, w => w.Contains("report service not registered"));
+        broker.Verify(b => b.DisconnectAsync(), Times.Once);
     }
 
     [Fact]

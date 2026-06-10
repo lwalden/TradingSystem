@@ -622,6 +622,9 @@ public class DiscordDailyReportServiceTests
         Assert.Equal(2, doc.RootElement.GetProperty("embeds").GetArrayLength());
         Assert.Contains("Readiness", body);
         Assert.Contains("Income: Ready", body);
+        // Review S5-002: the success log must state the readiness embed went out — the weekly
+        // cadence outcome has to be auditable from logs alone.
+        Assert.Contains(AllLogArgStrings(fx.Logger), s => s.Contains("with readiness scorecard"));
     }
 
     [Fact]
@@ -659,6 +662,12 @@ public class DiscordDailyReportServiceTests
         Assert.Contains("800.25", body);
         Assert.Contains("Cautious", body);
         Assert.Equal(0, LogCount(fx.Logger, LogLevel.Error));
+
+        // Review S5-002: off-day legibility — a Debug breadcrumb explains WHY no scorecard
+        // (cadence, not failure), and the success log says the core digest went out alone.
+        var logs = AllLogArgStrings(fx.Logger).ToList();
+        Assert.Contains(logs, s => s.Contains("Weekly readiness scorecard skipped"));
+        Assert.Contains(logs, s => s.Contains("core digest only"));
     }
 
     [Fact]

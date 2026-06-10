@@ -58,6 +58,11 @@ public class EndOfDayService : IEndOfDayService
     {
         var result = new EndOfDayResult();
 
+        // ONE date evaluation for the whole run: enrichment and the daily report must agree on
+        // the trading day even if the run straddles UTC midnight (re-evaluating per call could
+        // enrich one day's snapshot and then look up — and silently drop — the next day's report).
+        var today = DateTime.UtcNow.Date;
+
         var connected = await _broker.ConnectAsync(cancellationToken);
         if (!connected)
         {
@@ -92,12 +97,12 @@ public class EndOfDayService : IEndOfDayService
             result.StopTriggered =
                 metrics.DailyStopTriggered || metrics.WeeklyStopTriggered || metrics.DrawdownHaltTriggered;
 
-            await EnrichSnapshotAsync(runId, result, cancellationToken);
+            await EnrichSnapshotAsync(runId, today, result, cancellationToken);
 
             // S5-002 (Default D8): daily report AFTER snapshot persistence/enrichment, never
             // on a degraded (no-snapshot) run. Own try/catch inside — report failure can never
             // fail the EOD run or block the snapshot.
-            await TrySendDailyReportAsync(runId, result, cancellationToken);
+            await TrySendDailyReportAsync(runId, today, result, cancellationToken);
 
             _logger.LogInformation(
                 "End-of-day pipeline finished. RunId: {RunId}, SnapshotPersisted: {SnapshotPersisted}, SnapshotEnriched: {SnapshotEnriched}, StopTriggered: {StopTriggered}, Warnings: {WarningCount}",
@@ -168,13 +173,18 @@ public class EndOfDayService : IEndOfDayService
     /// never fails the run. Exception TYPE NAMES only reach logs (messages can echo the
     /// token-bearing webhook URI).
     /// </summary>
-    private async Task TrySendDailyReportAsync(string runId, EndOfDayResult result, CancellationToken cancellationToken)
+    private async Task TrySendDailyReportAsync(string runId, DateTime today, EndOfDayResult result, CancellationToken cancellationToken)
     {
         if (_dailyReportService == null)
         {
-            _logger.LogDebug(
-                "IDailyReportService not registered; end-of-day report skipped. RunId: {RunId}",
+            // Warning + result warning (matching the ISnapshotRepository pattern in
+            // EnrichSnapshotAsync): a silently-unregistered report service would otherwise look
+            // identical to a healthy run with delivery disabled.
+            _logger.LogWarning(
+                "IDailyReportService not registered; end-of-day report skipped. RunId: {RunId}. " +
+                "Check IDailyReportService registration in Program.cs.",
                 runId);
+            result.Warnings.Add("Daily report service not registered; report skipped.");
             return;
         }
 
@@ -188,7 +198,8 @@ public class EndOfDayService : IEndOfDayService
 
         try
         {
-            await _dailyReportService.SendDailyReportAsync(DateTime.UtcNow.Date, cancellationToken);
+            // UTC date matches the snapshot store key and the UTC-fixed EOD cron.
+            await _dailyReportService.SendDailyReportAsync(today, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -207,7 +218,7 @@ public class EndOfDayService : IEndOfDayService
     /// (TradesExecuted, CommissionsPaid, RealizedPnL, SPYClose, VIXClose, MarketRegime) and
     /// upsert. Any failure logs a warning and keeps the base snapshot — never throws.
     /// </summary>
-    private async Task EnrichSnapshotAsync(string runId, EndOfDayResult result, CancellationToken cancellationToken)
+    private async Task EnrichSnapshotAsync(string runId, DateTime today, EndOfDayResult result, CancellationToken cancellationToken)
     {
         if (_snapshotRepository == null)
         {
@@ -219,7 +230,6 @@ public class EndOfDayService : IEndOfDayService
             return;
         }
 
-        var today = DateTime.UtcNow.Date;
         try
         {
             var snapshot = await _snapshotRepository.GetSnapshotAsync(today, cancellationToken);

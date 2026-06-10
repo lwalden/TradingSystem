@@ -142,13 +142,23 @@ public class DiscordDailyReportService : IDailyReportService
         // S5-002 weekly cadence (Default D7, locked decision 5): the readiness scorecard is a
         // weekly section — appended only on the configured day (default Friday). On every
         // other day the scorecard service is not even consulted; the core digest is unchanged.
+        var readinessIncluded = false;
         if (day.DayOfWeek == _reporting.WeeklyScorecardDay)
         {
             var readiness = await TryBuildReadinessEmbedAsync(day, cancellationToken);
             if (readiness != null)
             {
                 embeds.Add(readiness);
+                readinessIncluded = true;
             }
+        }
+        else
+        {
+            _logger.LogDebug(
+                "Weekly readiness scorecard skipped for {Date} (cadence day {ScorecardDay}, today {DayOfWeek})",
+                day,
+                _reporting.WeeklyScorecardDay,
+                day.DayOfWeek);
         }
 
         var payload = new
@@ -159,7 +169,7 @@ public class DiscordDailyReportService : IDailyReportService
             embeds = embeds.ToArray()
         };
 
-        await PostWithRetryAsync(payload, day, cancellationToken);
+        await PostWithRetryAsync(payload, day, readinessIncluded, cancellationToken);
     }
 
     private static Embed BuildSummaryEmbed(DateTime day, DailySnapshot snapshot, List<Trade> trades)
@@ -291,7 +301,7 @@ public class DiscordDailyReportService : IDailyReportService
     // wait budget). Degrades to a scrubbed log and returns (no throw) on non-2xx exhaustion or a
     // transport failure — a missed report is never an operational stop. Status code / exception
     // type only is logged — never the webhook URL or token.
-    private async Task PostWithRetryAsync(object payload, DateTime day, CancellationToken cancellationToken)
+    private async Task PostWithRetryAsync(object payload, DateTime day, bool readinessIncluded, CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
         var attempt = 0;
@@ -302,7 +312,12 @@ public class DiscordDailyReportService : IDailyReportService
                 using var response = await _httpClient.PostAsJsonAsync(_config.WebhookUrl, payload, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Sent Discord daily report for {Date}", day);
+                    // Content marker makes the weekly-cadence outcome auditable from logs alone
+                    // (was the scorecard actually delivered this Friday, or just attempted?).
+                    _logger.LogInformation(
+                        "Sent Discord daily report for {Date} ({Content})",
+                        day,
+                        readinessIncluded ? "with readiness scorecard" : "core digest only");
                     return;
                 }
 
