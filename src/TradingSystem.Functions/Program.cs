@@ -122,6 +122,11 @@ var host = new HostBuilder()
         {
             builder.AddConsole();
             builder.SetMinimumLevel(LogLevel.Information);
+            // S5-004 (review): IHttpClientFactory's LogicalHandler logs the full request URI at
+            // Information on every send — for Discord named clients that URI IS the token-bearing
+            // webhook URL. Warning+ only for the HttpClient categories keeps the secret out of
+            // console/App Insights logs while preserving error visibility.
+            builder.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
         });
     })
     .Build();

@@ -30,8 +30,10 @@
 
     "Reporting:WeeklyScorecardDay": "Friday",
 
-    "Claude:ApiKey": "YOUR_CLAUDE_API_KEY",
-    "Claude:GatewayApiKey": "YOUR_GATEWAY_API_KEY",
+    "_comment_Claude_ApiKey": "Metered Anthropic API fallback key. NOT needed under the default posture (DirectApiFallbackEnabled=false) — leave the placeholder as-is.",
+    "Claude:ApiKey": "PLACEHOLDER_NOT_NEEDED_WHILE_FALLBACK_DISABLED",
+    "_comment_Claude_GatewayApiKey": "Bearer token for the local subscription claude-gateway (localhost:3131). Retrieve from the Bitwarden 'ClimbOn Co' org vault.",
+    "Claude:GatewayApiKey": "YOUR_GATEWAY_API_KEY_FROM_BITWARDEN_CLIMBON_CO",
     "Claude:GatewayBaseUrl": "http://localhost:3131/",
     "Claude:Model": "claude-sonnet-4-20250514",
     "Claude:DirectApiFallbackEnabled": "false",
