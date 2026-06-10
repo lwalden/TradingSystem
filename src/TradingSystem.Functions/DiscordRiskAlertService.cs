@@ -17,8 +17,13 @@ namespace TradingSystem.Functions;
 /// transport failure degrades to a scrubbed log and returns — no throw — per ADR-025). The delay is
 /// injectable so tests run zero-wait. The webhook URL stays config/Key-Vault sourced, never
 /// hard-coded.
+///
+/// S5-003 (Default D5): the SAME instance also implements <see cref="IOperationalAlertService"/>
+/// — operational (connect/orchestration failure) alerts ride the identical transport and
+/// hardening, but render warning-orange without the risk-metrics fields block. Risk-stop
+/// payloads and logs are byte-identical to pre-S5-003.
 /// </summary>
-public class DiscordRiskAlertService : IRiskAlertService
+public class DiscordRiskAlertService : IRiskAlertService, IOperationalAlertService
 {
     // Host allow-list / redaction and 429 header parsing live in DiscordWebhookGuard (S4-003
     // refactor — shared verbatim with DiscordDailyReportService, behavior unchanged).
@@ -26,6 +31,17 @@ public class DiscordRiskAlertService : IRiskAlertService
     // Retries are bounded by BOTH a retry count and a cumulative wait budget.
     private const int MaxRetries = 3;
     private const double MaxTotalWaitSeconds = 10.0;
+
+    // Embed colors: risk stops keep the original red; operational alerts are warning-orange
+    // (Default D5) so an ops failure is visually distinct from a capital-preservation stop.
+    private const int RiskStopColor = 15158332;
+    private const int OperationalColor = 15105570;
+
+    // Terminal-drop guidance per alert kind. The risk wording is unchanged (a missed stop alert
+    // demands manual verification); the operational wording is softer — an ops alert is not a
+    // capital-preservation stop, the run outcome itself is already in logs/App Insights.
+    private const string RiskDroppedNote = "verify the risk stop was acted on manually";
+    private const string OperationalDroppedNote = "check the run outcome in logs/Application Insights";
 
     private readonly HttpClient _httpClient;
     private readonly DiscordConfig _config;
@@ -64,6 +80,16 @@ public class DiscordRiskAlertService : IRiskAlertService
         }
     }
 
+    /// <summary>
+    /// S5-003 operational alert path (Default D5): same webhook/config/client/hardening as risk
+    /// stops, warning-orange embed, no metrics fields. Best-effort like every send on this
+    /// service — delivery failure degrades to a (softer) loud AlertDropped=true log, no throw.
+    /// </summary>
+    public Task SendOperationalAlertAsync(string title, string description, CancellationToken cancellationToken = default)
+    {
+        return SendAlertAsync(title, description, metrics: null, cancellationToken);
+    }
+
     public Task SendDailyStopTriggeredAsync(RiskMetrics metrics, CancellationToken cancellationToken = default)
     {
         return SendAlertAsync(
@@ -91,17 +117,21 @@ public class DiscordRiskAlertService : IRiskAlertService
             cancellationToken);
     }
 
+    // metrics == null selects the operational rendering (orange, no fields block); a non-null
+    // metrics keeps the original risk-stop rendering byte-identical (red + metrics fields).
     private async Task SendAlertAsync(
         string title,
         string description,
-        RiskMetrics metrics,
+        RiskMetrics? metrics,
         CancellationToken cancellationToken)
     {
+        var kind = metrics is null ? "operational" : "risk";
+
         if (!_config.Enabled)
         {
             // Debug, not Information: this branch fires on every risk-check cycle while alerts
             // are disabled, so an Info-level entry per cycle is pure log noise (B-006).
-            _logger.LogDebug("Discord risk alerts are disabled; skipping alert: {Title}", title);
+            _logger.LogDebug("Discord {AlertKind} alerts are disabled; skipping alert: {Title}", kind, title);
             return;
         }
 
@@ -122,37 +152,62 @@ public class DiscordRiskAlertService : IRiskAlertService
             return;
         }
 
+        // Property order (title, description, color, timestamp[, fields]) matches the original
+        // anonymous type so the serialized risk-stop payload stays byte-identical; operational
+        // embeds replace the metrics fields block with the description (no RiskMetrics on that
+        // path) and use the warning-orange color.
+        object embed = metrics is null
+            ? new
+            {
+                title,
+                description,
+                color = OperationalColor,
+                timestamp = DateTime.UtcNow.ToString("O")
+            }
+            : new
+            {
+                title,
+                description,
+                color = RiskStopColor,
+                timestamp = DateTime.UtcNow.ToString("O"),
+                fields = new[]
+                {
+                    new { name = "Daily P&L", value = $"{metrics.DailyPnLPercent:P2}", inline = true },
+                    new { name = "Weekly P&L", value = $"{metrics.WeeklyPnLPercent:P2}", inline = true },
+                    new { name = "Drawdown", value = $"{metrics.CurrentDrawdown:P2}", inline = true },
+                    new { name = "Open Positions", value = metrics.OpenPositionCount.ToString(), inline = true }
+                }
+            };
+
         var payload = new
         {
             username = _config.Username,
             // Disable mention parsing so alert content containing @everyone/@here can't ping.
             allowed_mentions = new { parse = Array.Empty<string>() },
-            embeds = new[]
-            {
-                new
-                {
-                    title,
-                    description,
-                    color = 15158332,
-                    timestamp = DateTime.UtcNow.ToString("O"),
-                    fields = new[]
-                    {
-                        new { name = "Daily P&L", value = $"{metrics.DailyPnLPercent:P2}", inline = true },
-                        new { name = "Weekly P&L", value = $"{metrics.WeeklyPnLPercent:P2}", inline = true },
-                        new { name = "Drawdown", value = $"{metrics.CurrentDrawdown:P2}", inline = true },
-                        new { name = "Open Positions", value = metrics.OpenPositionCount.ToString(), inline = true }
-                    }
-                }
-            }
+            embeds = new[] { embed }
         };
 
-        await PostWithRetryAsync(payload, title, cancellationToken);
+        await PostWithRetryAsync(
+            payload,
+            title,
+            kind,
+            metrics is null ? "Operational" : "Risk",
+            metrics is null ? OperationalDroppedNote : RiskDroppedNote,
+            cancellationToken);
     }
 
     // POSTs the payload, honoring a 429 Retry-After with a bounded backoff. Degrades to a scrubbed
     // log and returns (no throw) on non-2xx exhaustion or a transport failure, per ADR-025. Status
-    // code / exception type only is logged — never the webhook URL or token.
-    private async Task PostWithRetryAsync(object payload, string title, CancellationToken cancellationToken)
+    // code / exception type only is logged — never the webhook URL or token. The kind/droppedNote
+    // parameters keep the rendered risk-path log lines byte-identical to pre-S5-003 while giving
+    // operational drops the softer (but still AlertDropped=true loud) wording.
+    private async Task PostWithRetryAsync(
+        object payload,
+        string title,
+        string kind,
+        string kindCapitalized,
+        string droppedNote,
+        CancellationToken cancellationToken)
     {
         var start = DateTime.UtcNow;
         var attempt = 0;
@@ -163,7 +218,7 @@ public class DiscordRiskAlertService : IRiskAlertService
                 using var response = await _httpClient.PostAsJsonAsync(_config.WebhookUrl, payload, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("Sent Discord risk alert: {Title}", title);
+                    _logger.LogInformation("Sent Discord {AlertKind} alert: {Title}", kind, title);
                     return;
                 }
 
@@ -173,7 +228,9 @@ public class DiscordRiskAlertService : IRiskAlertService
                     // count. The alert is gone and will NOT be retried — make this loud and
                     // log-searchable (AlertDropped=true) so a missed STOP/HALT alert surfaces.
                     _logger.LogError(
-                        "Risk alert NOT delivered and will not be retried — verify the risk stop was acted on manually. AlertDropped={AlertDropped}, StatusCode={StatusCode}, Attempts={Attempt}/{MaxRetries}, Alert={Title}",
+                        "{AlertKind} alert NOT delivered and will not be retried — {DroppedNote}. AlertDropped={AlertDropped}, StatusCode={StatusCode}, Attempts={Attempt}/{MaxRetries}, Alert={Title}",
+                        kindCapitalized,
+                        droppedNote,
                         true,
                         (int)response.StatusCode,
                         attempt + 1,
@@ -188,7 +245,9 @@ public class DiscordRiskAlertService : IRiskAlertService
                     // Cumulative wait budget exhausted before the retry count was. Same outcome:
                     // the alert is dropped permanently — emit the loud, searchable signal.
                     _logger.LogError(
-                        "Risk alert NOT delivered and will not be retried — retry budget exhausted; verify the risk stop was acted on manually. AlertDropped={AlertDropped}, StatusCode={StatusCode}, Attempts={Attempt}/{MaxRetries}, Alert={Title}",
+                        "{AlertKind} alert NOT delivered and will not be retried — retry budget exhausted; {DroppedNote}. AlertDropped={AlertDropped}, StatusCode={StatusCode}, Attempts={Attempt}/{MaxRetries}, Alert={Title}",
+                        kindCapitalized,
+                        droppedNote,
                         true,
                         (int)response.StatusCode,
                         attempt + 1,
@@ -216,6 +275,23 @@ public class DiscordRiskAlertService : IRiskAlertService
                 // Caller cancelled — propagate cancellation, it carries no token.
                 throw;
             }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // HttpClient timeout (the caller did NOT cancel): the alert never reached Discord
+                // and will NOT be retried — same loud, searchable AlertDropped=true terminal shape
+                // as a transport error. A timeout must never escape the no-throw alert contract
+                // (ADR-025). Exception type names only — never ex.Message, which can echo the
+                // token-bearing request URI.
+                _logger.LogError(
+                    "{AlertKind} alert NOT delivered and will not be retried — send timed out; {DroppedNote}. AlertDropped={AlertDropped}, ErrorType={ErrorType}, InnerErrorType={InnerErrorType}, Alert={Title}",
+                    kindCapitalized,
+                    droppedNote,
+                    true,
+                    ex.GetType().Name,
+                    ex.InnerException?.GetType().Name,
+                    title);
+                return;
+            }
             catch (HttpRequestException ex)
             {
                 // Transport failure: the alert never reached Discord and will NOT be retried —
@@ -223,7 +299,9 @@ public class DiscordRiskAlertService : IRiskAlertService
                 // exception type, the nullable HTTP status, and the inner exception type. NEVER log
                 // ex.Message / ex.ToString() — those can echo the token-bearing request URI.
                 _logger.LogError(
-                    "Risk alert NOT delivered and will not be retried — transport error; verify the risk stop was acted on manually. AlertDropped={AlertDropped}, ErrorType={ErrorType}, StatusCode={StatusCode}, InnerErrorType={InnerErrorType}, Alert={Title}",
+                    "{AlertKind} alert NOT delivered and will not be retried — transport error; {DroppedNote}. AlertDropped={AlertDropped}, ErrorType={ErrorType}, StatusCode={StatusCode}, InnerErrorType={InnerErrorType}, Alert={Title}",
+                    kindCapitalized,
+                    droppedNote,
                     true,
                     ex.GetType().Name,
                     ex.StatusCode,
