@@ -10,6 +10,8 @@ using Moq;
 using TradingSystem.AI.Services;
 using TradingSystem.Core.Configuration;
 using TradingSystem.Core.Interfaces;
+using TradingSystem.Core.Models;
+using TradingSystem.Strategies.Services;
 using Xunit;
 
 namespace TradingSystem.Tests.AI;
@@ -632,6 +634,194 @@ public class ClaudeServiceTests
         Assert.Contains("prompt", body);
         Assert.Contains("system", body);
         Assert.Contains("model", body);
+    }
+
+    // ---- S4-004 (B-005): gateway jsonSchema structured output ----
+    // Gateway contract (verified 2026-06-09 vs claude-gateway docs/INTEGRATION.md):
+    // request field `jsonSchema` (camelCase, object, optional); when sent, the 200 body's
+    // `response` field is a JSON STRING conforming to the schema — deserialized directly,
+    // no brace-scanning. Without `jsonSchema`, `response` stays plain text (legacy path).
+
+    private static AIAnalysisRequest SchemaRequest() => new()
+    {
+        StrategyId = "test",
+        SystemPrompt = "sys",
+        UserPrompt = "user",
+        JsonSchema = new
+        {
+            type = "object",
+            properties = new { regime = new { type = "string" } },
+            required = new[] { "regime" }
+        }
+    };
+
+    // Wraps an inner gateway `response` string value into the gateway 200 body, with the inner
+    // string properly JSON-encoded (the gateway returns structured output as a JSON string).
+    private static string GatewayBody(string responseValue) =>
+        "{\"response\":" + System.Text.Json.JsonSerializer.Serialize(responseValue) + "}";
+
+    [Fact]
+    public async Task SchemaMode_GatewayStructuredResponse_DeserializesInnerJsonDirectly()
+    {
+        // Test plan 1: schema set, gateway returns {"response":"{\"regime\":\"riskon\"}"} →
+        // the inner JSON string deserializes straight into T (camelCase → PascalCase property).
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody("{\"regime\":\"riskon\"}"));
+        var (service, directHandler, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+
+        var result = await service.AnalyzeAsync<ClaudeRegimeStub>(SchemaRequest());
+
+        Assert.Equal("riskon", result.Regime);
+        Assert.Equal(0, directHandler.InvocationCount); // gateway leg only
+    }
+
+    [Fact]
+    public async Task SchemaMode_ResponseNotValidForType_ThrowsInvalidOperationException()
+    {
+        // Test plan 2: a structured response that is not valid JSON for T must surface as
+        // InvalidOperationException (the regime provider's catch → deterministic rules),
+        // never a silent null/default and never a raw JsonException.
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody("{\"regime\": }"));
+        var (service, _, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeAsync<ClaudeRegimeStub>(SchemaRequest()));
+    }
+
+    [Fact]
+    public async Task SchemaMode_ParseFailure_LogsWarningWithTruncatedRaw_AndStillThrows()
+    {
+        // Review S4-004 fix-now: a structured-output parse failure must emit a Warning that
+        // carries the JsonException and a 200-char-truncated raw payload (operators can tell
+        // "gateway returned junk" from "gateway down") — and must NOT swallow the rethrow
+        // (ADR-029/030 fail-to-rules contract).
+        var tailMarker = "ZZTAILZZ";
+        var rawResponse = "{\"regime\": " + new string('x', 250) + tailMarker; // invalid JSON, > 200 chars
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody(rawResponse));
+        var config = GatewayConfig();
+        var logger = new Mock<ILogger<ClaudeService>>();
+        var factory = new FakeHttpClientFactory(gatewayHandler, config);
+        var service = new ClaudeService(
+            logger.Object, Microsoft.Extensions.Options.Options.Create(config),
+            new HttpClient(new CountingHandler()), factory);
+
+        // Rethrow preserved: the caller's catch still falls back to deterministic rules.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeAsync<ClaudeRegimeStub>(SchemaRequest()));
+
+        var warning = logger.Invocations.SingleOrDefault(i =>
+            i.Method.Name == nameof(ILogger.Log) &&
+            i.Arguments[0] is LogLevel l && l == LogLevel.Warning &&
+            i.Arguments[2]!.ToString()!.Contains("structured-output parse failed"));
+        Assert.NotNull(warning);
+        var message = warning!.Arguments[2]!.ToString()!;
+        Assert.Contains(nameof(ClaudeRegimeStub), message); // {Type} param present
+        Assert.DoesNotContain(tailMarker, message); // raw payload truncated to 200 chars
+        Assert.IsType<System.Text.Json.JsonException>(warning.Arguments[3]); // exception attached
+    }
+
+    [Fact]
+    public async Task SchemaMode_ValidJsonMissingFields_DeserializesWithNulls_NoException()
+    {
+        // Test plan 3: valid JSON missing expected fields deserializes with null members —
+        // the provider's null-regime guard handles the fallback; no exception masking here.
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody("{\"foo\":\"bar\"}"));
+        var (service, _, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+
+        var result = await service.AnalyzeAsync<ClaudeRegimeStub>(SchemaRequest());
+
+        Assert.NotNull(result);
+        Assert.Null(result.Regime);
+    }
+
+    [Fact]
+    public async Task NoSchema_LegacyBraceScan_StillExtractsEmbeddedJson()
+    {
+        // Test plan 4 (regression): without a schema the response is plain text and the
+        // legacy whole-string brace-scan path must keep working unchanged.
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK,
+            GatewayBody("Here is my analysis: {\"Regime\":\"riskon\"} — hope that helps."));
+        var (service, _, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+
+        var result = await service.AnalyzeAsync<ClaudeRegimeStub>(SampleRequest());
+
+        Assert.Equal("riskon", result.Regime);
+    }
+
+    [Fact]
+    public async Task SchemaSupplied_GatewayBodyIncludesJsonSchema()
+    {
+        // Test plan 5a: the posted gateway body carries the camelCase `jsonSchema` field.
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody("{\"regime\":\"riskon\"}"));
+        var (service, _, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+
+        await service.AnalyzeAsync<ClaudeRegimeStub>(SchemaRequest());
+
+        var body = await gatewayHandler.LastRequest!.Content!.ReadAsStringAsync();
+        Assert.Contains("\"jsonSchema\"", body);
+        Assert.Contains("\"regime\"", body); // the schema's property made it into the wire body
+    }
+
+    [Fact]
+    public async Task NoSchema_GatewayBodyOmitsJsonSchema()
+    {
+        // Test plan 5b: no schema supplied → the field must be absent (legacy contract),
+        // not serialized as null.
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody("plain text"));
+        var (service, _, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+
+        await service.AnalyzeAsync(SampleRequest());
+
+        var body = await gatewayHandler.LastRequest!.Content!.ReadAsStringAsync();
+        Assert.DoesNotContain("jsonSchema", body);
+    }
+
+    // Full-path harness: a REAL ClaudeService (gateway leg stubbed) inside MarketRegimeProvider,
+    // exercising the schema → structured parse → regime mapping end to end (test plan 6).
+    private static MarketRegimeProvider BuildRegimeProviderWithRealClaude(string gatewayBody)
+    {
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, gatewayBody);
+        var (service, _, _) = BuildGatewayService(GatewayConfig(), gatewayHandler);
+        return new MarketRegimeProvider(
+            (_, _) => Task.FromResult(new TechnicalIndicators
+            {
+                Symbol = "SPY",
+                SMA20 = 500m,
+                SMA50 = 490m,
+                SMA200 = 450m,
+                Above50DMA = true,
+                Above200DMA = true,
+                DistanceFrom50DMA = 2m
+            }),
+            (_, _) => Task.FromResult(new Quote { Symbol = "VIX", Last = 18m }),
+            Mock.Of<ILogger>(),
+            service,
+            Microsoft.Extensions.Options.Options.Create(new ClaudeConfig()));
+    }
+
+    [Fact]
+    public async Task RegimeProvider_WellFormedStructuredResponse_SourceIsClaude()
+    {
+        var provider = BuildRegimeProviderWithRealClaude(GatewayBody(
+            "{\"regime\":\"riskon\",\"riskMultiplier\":0.8,\"rationale\":\"calm tape\"}"));
+
+        var regime = await provider.GetMarketRegimeAsync();
+
+        Assert.Equal(RegimeSource.Claude, regime.Source);
+        Assert.Equal(RegimeType.RiskOn, regime.Regime);
+        Assert.Equal(0.8m, regime.RiskMultiplier); // in-range AI multiplier passes the clamp untouched
+    }
+
+    [Fact]
+    public async Task RegimeProvider_MalformedStructuredResponse_FallsBackToRules()
+    {
+        var provider = BuildRegimeProviderWithRealClaude(GatewayBody("{\"regime\": }"));
+
+        var regime = await provider.GetMarketRegimeAsync();
+
+        // ADR-029/030 invariant: parse failure throws into the provider's catch → rules.
+        Assert.Equal(RegimeSource.Rules, regime.Source);
+        Assert.Equal(RegimeType.RiskOn, regime.Regime); // VIX 18, above both MAs
+        Assert.Equal(1.0m, regime.RiskMultiplier); // rule-table multiplier, NOT the AI clamp
     }
 
     // Minimal deserialization target mirroring the regime response shape used by the caller.

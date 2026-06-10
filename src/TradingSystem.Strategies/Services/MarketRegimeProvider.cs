@@ -40,6 +40,28 @@ internal class MarketRegimeProvider
     private const decimal MinRiskMultiplier = 0.5m;
     private const decimal MaxRiskMultiplier = 1.0m;
 
+    // JSON Schema for the gateway's structured-output (`jsonSchema`) request field (S4-004 /
+    // B-005). Mirrors ClaudeRegimeResponse: the gateway enforces this shape and returns the
+    // `response` body field as a conforming JSON string, eliminating brace-scan extraction.
+    // The schema's bounds are advisory to the model; the authoritative risk-multiplier clamp
+    // in DetectRegimeWithClaudeAsync is unchanged and still applies to whatever comes back.
+    private static readonly object RegimeResponseSchema = new
+    {
+        type = "object",
+        properties = new
+        {
+            regime = new
+            {
+                type = "string",
+                @enum = new[] { "RiskOn", "Cautious", "RiskOff", "Recovery" }
+            },
+            riskMultiplier = new { type = "number", minimum = 0.5, maximum = 1.0 },
+            rationale = new { type = "string" },
+            keyFactors = new { type = "array", items = new { type = "string" } }
+        },
+        required = new[] { "regime", "riskMultiplier", "rationale" }
+    };
+
     public MarketRegimeProvider(
         Func<string, CancellationToken, Task<TechnicalIndicators>> getIndicators,
         Func<string, CancellationToken, Task<Quote>> getQuote,
@@ -209,7 +231,8 @@ Respond ONLY with valid JSON in this exact format:
     ""keyFactors"": [""factor1"", ""factor2""]
 }",
             UserPrompt = userPrompt,
-            MaxTokens = 500
+            MaxTokens = 500,
+            JsonSchema = RegimeResponseSchema
         };
 
         var response = await _claudeService!.AnalyzeAsync<ClaudeRegimeResponse>(request, cancellationToken);
