@@ -44,20 +44,34 @@ public static class ClaudeServiceRegistration
         // B-008: the timeout is clamped to ClaudeConfig.MaxGatewayTimeoutSeconds with a warning, so
         // a config typo (e.g. 3500 for 35) degrades loudly to a bounded wait instead of parking the
         // gateway leg for minutes — or crashing the host, which is why this clamps rather than throws.
+        // The effective timeout is computed ONCE here, not in the configure delegate: that delegate
+        // re-executes on every CreateClient (i.e. per AI request). The lower-bound guard (>= 1s)
+        // keeps a zero/negative config value from reaching HttpClient.Timeout, which would throw
+        // ArgumentOutOfRangeException at the first request.
+        var effectiveTimeoutSeconds =
+            Math.Max(1, Math.Min(config.GatewayTimeoutSeconds, ClaudeConfig.MaxGatewayTimeoutSeconds));
+        var clampWarningLogged = false;
+
         services.AddHttpClient(ClaudeService.GatewayClientName, (sp, c) =>
         {
-            if (config.GatewayTimeoutSeconds > ClaudeConfig.MaxGatewayTimeoutSeconds)
+            // Warn through the DI logging pipeline (only reachable from inside the delegate, where
+            // the IServiceProvider exists — building a provider inside Add is a known anti-pattern).
+            // The once-only flag keeps the delegate's per-CreateClient re-execution from repeating
+            // the warning on every AI request; a duplicate under a first-call race is harmless.
+            if (!clampWarningLogged && config.GatewayTimeoutSeconds > ClaudeConfig.MaxGatewayTimeoutSeconds)
             {
+                clampWarningLogged = true;
                 sp.GetService<ILoggerFactory>()
                     ?.CreateLogger(typeof(ClaudeServiceRegistration))
                     .LogWarning(
-                        "Claude:GatewayTimeoutSeconds={Configured} exceeds the upper bound; clamping to {Max}s. Fix the configuration value.",
+                        "Claude:GatewayTimeoutSeconds={Configured} exceeds the {MaxSeconds}s upper bound; using {AppliedSeconds}s. Fix the configuration value.",
                         config.GatewayTimeoutSeconds,
-                        ClaudeConfig.MaxGatewayTimeoutSeconds);
+                        ClaudeConfig.MaxGatewayTimeoutSeconds,
+                        effectiveTimeoutSeconds);
             }
 
             c.BaseAddress = new Uri(config.GatewayBaseUrl);
-            c.Timeout = TimeSpan.FromSeconds(config.ClampedGatewayTimeoutSeconds);
+            c.Timeout = TimeSpan.FromSeconds(effectiveTimeoutSeconds);
         });
 
         // Direct Anthropic typed client — 60s default timeout is intentional and unchanged.

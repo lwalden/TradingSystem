@@ -534,6 +534,23 @@ public class ClaudeServiceTests
         Assert.True(client.Timeout <= TimeSpan.FromSeconds(ClaudeConfig.MaxGatewayTimeoutSeconds));
     }
 
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void GatewayTimeout_ZeroOrNegative_GuardsToOneSecond_UsableClient(string configured)
+    {
+        // Review S4-005 rider: HttpClient.Timeout throws ArgumentOutOfRangeException for
+        // non-positive values, so a zero/negative config value must be floored to 1s at
+        // registration instead of detonating on the first AI request.
+        var (provider, _) = BuildGatewayRegistration(configured);
+
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ClaudeService.GatewayClientName);
+
+        Assert.Equal(TimeSpan.FromSeconds(1), client.Timeout);
+        Assert.NotNull(provider.GetService<IClaudeService>());
+    }
+
     [Fact]
     public void GatewayTimeout_InRange_Unchanged_NoWarning()
     {

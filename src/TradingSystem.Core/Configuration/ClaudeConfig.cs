@@ -44,8 +44,4 @@ public class ClaudeConfig
     // unchanged. A hung/slow gateway still falls back via the AnalyzeAsync seam — to deterministic
     // rules when DirectApiFallbackEnabled is off, or to the metered direct API when on.
     public int GatewayTimeoutSeconds { get; set; } = 35;
-
-    // Validation hook: GatewayTimeoutSeconds with the upper bound applied. Consumers that set a
-    // real HTTP timeout (ClaudeServiceRegistration) read this instead of the raw value.
-    public int ClampedGatewayTimeoutSeconds => Math.Min(GatewayTimeoutSeconds, MaxGatewayTimeoutSeconds);
 }
