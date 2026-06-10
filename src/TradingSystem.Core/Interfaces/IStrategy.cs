@@ -91,6 +91,8 @@ public class AIAnalysisRequest
     /// 200-body <c>response</c> field is a JSON string conforming to this schema and is
     /// deserialized directly — no brace-scanning. Null preserves legacy plain-text behavior.
     /// The direct Anthropic API leg ignores this field entirely.
+    /// See <c>MarketRegimeProvider.RegimeResponseSchema</c> (TradingSystem.Strategies) for the
+    /// canonical example shape.
     /// </summary>
     public object? JsonSchema { get; set; }
 }

@@ -185,6 +185,14 @@ public class ClaudeService : IClaudeService
             }
             catch (JsonException ex)
             {
+                // Review S4-004: log before rethrowing so operators can distinguish "gateway
+                // returned junk" from "gateway down". Raw payload truncated to 200 chars to
+                // bound the leak surface (security lens); the rethrow below is unchanged, so
+                // the ADR-029/030 fail-to-rules contract is preserved.
+                _logger.LogWarning(ex,
+                    "Gateway structured-output parse failed for {Type}; raw (truncated): {Raw}",
+                    typeof(T).Name,
+                    response.Length > 200 ? response[..200] : response);
                 throw new InvalidOperationException(
                     "Gateway structured response was not valid JSON for the requested type", ex);
             }

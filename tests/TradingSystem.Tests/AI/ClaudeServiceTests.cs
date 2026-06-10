@@ -688,6 +688,38 @@ public class ClaudeServiceTests
     }
 
     [Fact]
+    public async Task SchemaMode_ParseFailure_LogsWarningWithTruncatedRaw_AndStillThrows()
+    {
+        // Review S4-004 fix-now: a structured-output parse failure must emit a Warning that
+        // carries the JsonException and a 200-char-truncated raw payload (operators can tell
+        // "gateway returned junk" from "gateway down") — and must NOT swallow the rethrow
+        // (ADR-029/030 fail-to-rules contract).
+        var tailMarker = "ZZTAILZZ";
+        var rawResponse = "{\"regime\": " + new string('x', 250) + tailMarker; // invalid JSON, > 200 chars
+        var gatewayHandler = new StubHandler(HttpStatusCode.OK, GatewayBody(rawResponse));
+        var config = GatewayConfig();
+        var logger = new Mock<ILogger<ClaudeService>>();
+        var factory = new FakeHttpClientFactory(gatewayHandler, config);
+        var service = new ClaudeService(
+            logger.Object, Microsoft.Extensions.Options.Options.Create(config),
+            new HttpClient(new CountingHandler()), factory);
+
+        // Rethrow preserved: the caller's catch still falls back to deterministic rules.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeAsync<ClaudeRegimeStub>(SchemaRequest()));
+
+        var warning = logger.Invocations.SingleOrDefault(i =>
+            i.Method.Name == nameof(ILogger.Log) &&
+            i.Arguments[0] is LogLevel l && l == LogLevel.Warning &&
+            i.Arguments[2]!.ToString()!.Contains("structured-output parse failed"));
+        Assert.NotNull(warning);
+        var message = warning!.Arguments[2]!.ToString()!;
+        Assert.Contains(nameof(ClaudeRegimeStub), message); // {Type} param present
+        Assert.DoesNotContain(tailMarker, message); // raw payload truncated to 200 chars
+        Assert.IsType<System.Text.Json.JsonException>(warning.Arguments[3]); // exception attached
+    }
+
+    [Fact]
     public async Task SchemaMode_ValidJsonMissingFields_DeserializesWithNulls_NoException()
     {
         // Test plan 3: valid JSON missing expected fields deserializes with null members —
