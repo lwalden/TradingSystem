@@ -137,3 +137,7 @@ nul
 .sprint-tool-count
 .correction-state
 .context-usage
+.quality-gate-pass
+.quality-review-result.json
+.claude/worktrees/
+.exec/
