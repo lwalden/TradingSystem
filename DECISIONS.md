@@ -254,6 +254,39 @@ parameters; only their gating role changes.
 
 ---
 
+### ADR-031: Paper-Validation Run Hosting — Locally Hosted Functions Worker
+**Date:** 2026-06-10 | **Status:** Decided
+**Rationale:** The 12-week SANDBOX paper-validation run (ADR-030, PDR-004) needs the Azure
+Functions isolated worker actually running on a schedule. Both of the worker's live
+dependencies are loopback-only by design: TWS paper exposes its API socket on
+`127.0.0.1:7497`, and claude-gateway listens on `localhost:3131` (plaintext loopback HTTP
+per ADR-029). An Azure-hosted worker cannot reach either, and exposing either off-box would
+violate the ADR-029 transport stance. The question is where the worker runs for the
+validation window.
+**Decision:** Host the Functions worker **locally on the dev box**, co-resident with TWS and
+claude-gateway (`func start` / `dotnet run` from `src/TradingSystem.Functions`). The two
+NCRONTAB timers (pre-market `0 0 13 * * 1-5`, EOD `0 30 20 * * 1-5`, both UTC) fire only
+while the worker is up — the dev box must be on across the timer windows during market days.
+Operational procedure (preflight, schedule, triage, posture) lives in
+`docs/paper-validation-runbook.md`; that runbook's Run Log is the system of record for the
+validation start date.
+**Alternatives considered:**
+- *Azure-hosted Functions (the deploy target the project was scaffolded for)* — REJECTED for
+  the validation window. It cannot reach loopback-bound TWS/gateway, and exposing either off
+  the host (port forward, public webhook) violates ADR-029's loopback-only transport stance.
+- *Relay/tunnel from Azure to the dev box (reverse proxy, VPN, hybrid connection)* —
+  DEFERRED. Operational complexity plus a new attack surface on the broker API for zero
+  validation benefit — the dev box still has to be on for TWS anyway.
+- *Dedicated always-on VM hosting all three (worker + TWS + gateway)* — DEFERRED on cost.
+  Revisit if dev-box uptime proves inadequate mid-run (chronic gap days in the Run Log).
+**Consequences:** Validation continuity depends on dev-box uptime. Missed timer firings do
+not catch up; a missed EOD run is visible as a same-date gap in `data/snapshots.json` and a
+missing daily report, and is tolerated by the ≥12-week window rather than treated as an
+incident. The Azure deployment path (Key Vault, App Insights cloud hosting) remains intact
+for a future LIVE posture decision — this ADR governs the paper-validation window only.
+
+---
+
 ## Pending Decisions
 
 ### PDR-001: Intraday vs Daily Execution for Options
