@@ -56,7 +56,9 @@ var host = new HostBuilder()
         // Core services
         services.AddSingleton<IBrokerService, IBKRBrokerService>();
         services.AddSingleton<IMarketDataService, CachingMarketDataService>();
-        services.AddHttpClient("DiscordRiskAlerts");
+        // 8s send bound: an alert POST must never hang an orchestration run. A timeout surfaces
+        // as OperationCanceledException and is swallowed by the service's no-throw contract.
+        services.AddHttpClient("DiscordRiskAlerts", c => c.Timeout = TimeSpan.FromSeconds(8));
         // S5-003 (Default D5): ONE DiscordRiskAlertService instance serves BOTH alert interfaces
         // — same webhook/config/named client/S3-004 hardening. Risk stops render red with
         // metrics fields; operational (connect/orchestration failure) alerts render orange.

@@ -67,7 +67,8 @@ public class EndOfDayService : IEndOfDayService
                 runId,
                 "connect-failure",
                 "Broker Connect Failure — End of Day",
-                $"Could not connect to the broker for the end-of-day run. No snapshot was written. RunId: {runId}.",
+                $"Could not connect to the broker for the end-of-day run. No snapshot was written. RunId: {runId}. " +
+                "Verify TWS/IB Gateway is running and the API port/client-id match config.",
                 cancellationToken);
 
             return result;

@@ -275,6 +275,23 @@ public class DiscordRiskAlertService : IRiskAlertService, IOperationalAlertServi
                 // Caller cancelled — propagate cancellation, it carries no token.
                 throw;
             }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // HttpClient timeout (the caller did NOT cancel): the alert never reached Discord
+                // and will NOT be retried — same loud, searchable AlertDropped=true terminal shape
+                // as a transport error. A timeout must never escape the no-throw alert contract
+                // (ADR-025). Exception type names only — never ex.Message, which can echo the
+                // token-bearing request URI.
+                _logger.LogError(
+                    "{AlertKind} alert NOT delivered and will not be retried — send timed out; {DroppedNote}. AlertDropped={AlertDropped}, ErrorType={ErrorType}, InnerErrorType={InnerErrorType}, Alert={Title}",
+                    kindCapitalized,
+                    droppedNote,
+                    true,
+                    ex.GetType().Name,
+                    ex.InnerException?.GetType().Name,
+                    title);
+                return;
+            }
             catch (HttpRequestException ex)
             {
                 // Transport failure: the alert never reached Discord and will NOT be retried —

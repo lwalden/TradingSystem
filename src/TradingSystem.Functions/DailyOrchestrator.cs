@@ -62,7 +62,8 @@ public class DailyOrchestrator
                 runId,
                 "orchestration-failure",
                 "Orchestration Run Failure — Pre-Market",
-                $"Unhandled {ex.GetType().Name} during the pre-market run. RunId: {runId}. See Application Insights for details.",
+                $"Unhandled {ex.GetType().Name} during the pre-market run. RunId: {runId}. " +
+                "Options sleeve was not evaluated. See Application Insights for details.",
                 CancellationToken.None);
 
             throw;
@@ -122,7 +123,8 @@ public class DailyOrchestrator
                 runId,
                 "orchestration-failure",
                 "Orchestration Run Failure — End of Day",
-                $"Unhandled {ex.GetType().Name} during the end-of-day run. RunId: {runId}. See Application Insights for details.",
+                $"Unhandled {ex.GetType().Name} during the end-of-day run. RunId: {runId}. " +
+                "The daily snapshot may not have been written. See Application Insights for details.",
                 CancellationToken.None);
 
             throw;
@@ -149,7 +151,8 @@ public class DailyOrchestrator
                 runId,
                 "connect-failure",
                 "Broker Connect Failure — Pre-Market",
-                $"Could not connect to the broker for the pre-market run. Options sleeve skipped. RunId: {runId}.",
+                $"Could not connect to the broker for the pre-market run. Options sleeve skipped. RunId: {runId}. " +
+                "Verify TWS/IB Gateway is running and the API port/client-id match config.",
                 cancellationToken);
 
             return;
