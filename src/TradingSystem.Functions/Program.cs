@@ -40,6 +40,12 @@ var host = new HostBuilder()
             context.Configuration.GetSection("TradingSystem"));
         services.Configure<TacticalConfig>(
             context.Configuration.GetSection("TradingSystem:Tactical"));
+        // S5-004r: OptionsSleeveManager takes the bare TacticalConfig (its siblings take
+        // IOptions<TacticalConfig>), so the bare type must be resolvable or the worker dies
+        // at DI validation on boot. This was masked by the AI-package TypeLoadException —
+        // the unit suite never builds the full host graph, only the real `func start` does.
+        services.AddSingleton(sp =>
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TacticalConfig>>().Value);
         services.Configure<IBKRConfig>(
             context.Configuration.GetSection("IBKR"));
         services.Configure<LocalStorageConfig>(
@@ -53,7 +59,12 @@ var host = new HostBuilder()
         services.Configure<ReportingConfig>(
             context.Configuration.GetSection("Reporting"));
         
-        // Application Insights
+        // Application Insights — registration is inert until APPLICATIONINSIGHTS_CONNECTION_STRING
+        // is set (it is NOT set in local.settings.json or any deployed config today): with no
+        // connection string the SDK builds a disabled TelemetryConfiguration and sends nothing.
+        // Before ever setting that variable, the discord.com URI-redaction gate in DECISIONS.md
+        // (Known Debt KD-005/KD-006) must be satisfied — AI 2.x dependency telemetry records full
+        // request URLs, which for the Discord named clients are token-bearing webhook URLs.
         services.AddApplicationInsightsTelemetryWorkerService();
         services.ConfigureFunctionsApplicationInsights();
         
@@ -124,8 +135,14 @@ var host = new HostBuilder()
             builder.SetMinimumLevel(LogLevel.Information);
             // S5-004 (review): IHttpClientFactory's LogicalHandler logs the full request URI at
             // Information on every send — for Discord named clients that URI IS the token-bearing
-            // webhook URL. Warning+ only for the HttpClient categories keeps the secret out of
-            // console/App Insights logs while preserving error visibility.
+            // webhook URL. Warning+ for every "System.Net.Http.HttpClient.*" ILogger category
+            // keeps the secret out of console logs and out of App Insights *log* telemetry while
+            // preserving error visibility. Scope note (S5-004r review): this filter governs only
+            // ILogger output — it does NOT cover App Insights *dependency* telemetry, which the
+            // AI 2.x SDK emits with the full request URL outside the logging pipeline. That path
+            // is dormant solely because APPLICATIONINSIGHTS_CONNECTION_STRING is unset (see the
+            // enablement-gate comment at the App Insights registration above and DECISIONS.md
+            // Known Debt).
             builder.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
         });
     })

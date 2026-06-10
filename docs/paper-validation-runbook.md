@@ -43,7 +43,13 @@ Run this check each trading morning **before 5:00 AM PT in winter (PST) / 6:00 A
    classification (ADR-029/ADR-030) — **this is expected behavior, not an incident**.
    Restart the gateway (`D:\Source\claude-gateway`) when convenient.
 3. **Functions worker** started (`func start` per section 1).
-4. **Startup-log smoke check:** the worker banner lists both timer functions —
+4. **Host boot smoke:** after `func start`, the function-list banner must appear with **no
+   `TypeLoadException`** (or repeated "worker process" restarts) in the startup output.
+   The banner proves the isolated worker process actually loaded its DI graph — a
+   package-version mismatch (S5-004r) can pass the full unit suite yet crash the worker
+   at bootstrap, because tests never load the Functions host. Run this check first: the
+   function list in step 5 is meaningless until the worker has provably booted.
+5. **Startup-log smoke check:** the worker banner lists both timer functions —
    `DailyOrchestrator_PreMarket` and `DailyOrchestrator_EndOfDay`. If either is missing,
    the build is broken or the wrong project started; do not assume the day will run.
 
