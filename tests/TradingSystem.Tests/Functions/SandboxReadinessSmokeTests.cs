@@ -263,6 +263,65 @@ public class SandboxReadinessSmokeTests
     }
 
     // ========================================================================================
+    // 6d. S5-002: the EOD pipeline (S5-001 seam) delivers the daily report through the
+    //     recording stub on a scorecard day — summary + readiness embeds, zero live POSTs,
+    //     zero TWS (broker is a mock), AI inert (no AI service is wired at all).
+    // ========================================================================================
+    [Fact]
+    public async Task Smoke_EndOfDayPath_SendsReportWithReadinessEmbed_ThroughStubOnly()
+    {
+        // The EOD pipeline reports on DateTime.UtcNow.Date, so this test seeds relative to
+        // the current UTC date and pins the scorecard cadence to its weekday (the fixture
+        // does both from the asOf anchor).
+        var today = DateTime.UtcNow.Date;
+        var fx = new SmokeFixture(asOf: today, writableSnapshots: true);
+
+        // S5-001 seam: mocked broker connect + mocked risk sync (the RiskManager spine has
+        // its own rigorous suite); the REAL report service hangs off the EOD run.
+        var broker = new Mock<IBrokerService>();
+        broker.Setup(b => b.ConnectAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        broker.Setup(b => b.DisconnectAsync()).Returns(Task.CompletedTask);
+        var riskManager = new Mock<IRiskManager>();
+        riskManager.Setup(r => r.GetRiskMetricsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RiskMetrics());
+
+        var endOfDay = new EndOfDayService(
+            broker.Object,
+            riskManager.Object,
+            NullLogger<EndOfDayService>.Instance,
+            fx.SnapshotRepository,
+            fx.TradeRepository,
+            marketDataService: null,
+            operationalAlertService: null,
+            dailyReportService: fx.ReportService);
+
+        var result = await endOfDay.RunAsync("smoke-eod", CancellationToken.None);
+
+        Assert.True(result.BrokerConnected);
+        Assert.True(result.SnapshotPersisted);
+
+        // Exactly one report POST, terminated at the in-memory stub (never the wire).
+        Assert.Equal(1, fx.DiscordHandler.InvocationCount);
+        var body = Assert.Single(fx.DiscordHandler.Bodies);
+        var uri = Assert.Single(fx.DiscordHandler.RequestUris);
+        Assert.Equal("discord.com", uri.Host);
+
+        // Scorecard day (cadence pinned to today's weekday): summary + readiness embeds.
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var embeds = doc.RootElement.GetProperty("embeds");
+        Assert.Equal(2, embeds.GetArrayLength());
+        Assert.Contains("Daily Report", embeds[0].GetProperty("title").GetString());
+        Assert.Contains("Readiness", embeds[1].GetProperty("title").GetString());
+
+        // Safety posture intact: no order placement, no config writes, mode stays Sandbox.
+        fx.OrderRepository.VerifyNoOtherCalls();
+        fx.SignalRepository.VerifyNoOtherCalls();
+        Assert.Equal(0, fx.ConfigRepo.SaveConfigCount);
+        Assert.Equal(TradingMode.Sandbox, fx.SystemConfig.Mode);
+        broker.Verify(b => b.DisconnectAsync(), Times.Once);
+    }
+
+    // ========================================================================================
     // 7. Suite-green guard: the fixture is structurally CI-safe — fakes/stubs only, no TWS,
     //    no live HTTP, no Cosmos; Mode is Sandbox and never Live.
     // ========================================================================================
@@ -311,20 +370,30 @@ public class SandboxReadinessSmokeTests
         public ISleeveReadinessScorecardService ScorecardService { get; }
         public IDailyReportService ReportService { get; }
 
-        public SmokeFixture(bool discordEnabled = true)
+        // The S5-002 EOD-path smoke test re-seeds relative to the CURRENT UTC date (the EOD
+        // pipeline reports on DateTime.UtcNow.Date) and needs a writable snapshot store for
+        // the enrichment upsert; every other test keeps the pinned AsOf + read-only posture.
+        public SmokeFixture(bool discordEnabled = true, DateTime? asOf = null, bool writableSnapshots = false)
         {
+            var anchor = (asOf ?? AsOf).Date;
+
             ConfigRepo = new CountingConfigRepository(SystemConfig);
             ConfigRepo.Seed(SleeveValidationThresholds.SettingsKey, SleeveValidationThresholds.Defaults());
             ConfigRepo.ResetWriteCount();
 
-            SnapshotRepository = new ReadOnlySnapshotRepository(SeedSnapshots());
-            TradeRepository = new ReadOnlyTradeRepository(SeedTrades());
+            SnapshotRepository = writableSnapshots
+                ? new WritableSnapshotRepository(SeedSnapshots(anchor))
+                : new ReadOnlySnapshotRepository(SeedSnapshots(anchor));
+            TradeRepository = new ReadOnlyTradeRepository(SeedTrades(anchor));
 
             // S4-001/S4-002: real scorecard service over the in-memory seam and seeded metrics.
             ScorecardService = new SleeveReadinessScorecardService(
                 SnapshotRepository, TradeRepository, ConfigRepo);
 
             // S4-003: real report service; webhook HTTP terminates at the recording stub.
+            // S5-002 cadence trap defusal: AsOf (2026-06-08) is a MONDAY — pin the weekly
+            // scorecard day to the anchor's weekday so the readiness-embed assertions keep
+            // exercising the embed path under the new cadence gate.
             ReportService = new DiscordDailyReportService(
                 new StubHttpClientFactory(DiscordHandler),
                 Microsoft.Extensions.Options.Options.Create(new DiscordConfig
@@ -336,14 +405,18 @@ public class SandboxReadinessSmokeTests
                 SnapshotRepository,
                 TradeRepository,
                 ReportLogger.Object,
-                ScorecardService);
+                ScorecardService,
+                Microsoft.Extensions.Options.Options.Create(new ReportingConfig
+                {
+                    WeeklyScorecardDay = anchor.DayOfWeek
+                }));
         }
 
         // 13 weekly points = a 12-week span (exactly MinWeeksObserved). Income 100k -> 105k
         // (+5%) and tactical 100k -> 104k (+4%) vs SPY 500 -> 510 (+2%): both sleeves are net
         // profitable, beat SPY, monotonic (zero drawdown), and end above the $100k capital
         // minimum. The final (report-day) snapshot carries the day's P&L/regime fields.
-        private static List<DailySnapshot> SeedSnapshots()
+        private static List<DailySnapshot> SeedSnapshots(DateTime asOf)
         {
             const int count = 13;
             var snapshots = new List<DailySnapshot>();
@@ -352,7 +425,7 @@ public class SandboxReadinessSmokeTests
                 var t = (decimal)i / (count - 1);
                 snapshots.Add(new DailySnapshot
                 {
-                    Date = AsOf.AddDays(-7 * (count - 1 - i)),
+                    Date = asOf.AddDays(-7 * (count - 1 - i)),
                     IncomeSleeveValue = 100_000m + 5_000m * t,
                     TacticalSleeveValue = 100_000m + 4_000m * t,
                     SPYClose = 500m + 10m * t
@@ -376,7 +449,7 @@ public class SandboxReadinessSmokeTests
         // comfortably above the default gate) plus one closed report-day fill (entered after
         // AsOf midnight so it renders in the day's Fills without perturbing the scorecard
         // window, which ends at AsOf).
-        private static List<Trade> SeedTrades()
+        private static List<Trade> SeedTrades(DateTime asOf)
         {
             var trades = new List<Trade>();
             foreach (var sleeve in new[] { SleeveType.Income, SleeveType.Tactical })
@@ -388,8 +461,8 @@ public class SandboxReadinessSmokeTests
                         Sleeve = sleeve,
                         StrategyId = sleeve == SleeveType.Income ? "income-monthly-reinvest" : "options-csp",
                         Symbol = sleeve == SleeveType.Income ? "VIG" : "SPY",
-                        EntryTime = AsOf.AddDays(-30 - i),
-                        ExitTime = AsOf.AddDays(-25 - i),
+                        EntryTime = asOf.AddDays(-30 - i),
+                        ExitTime = asOf.AddDays(-25 - i),
                         RealizedPnL = i < 7 ? 100m : -50m
                     });
                 }
@@ -403,8 +476,8 @@ public class SandboxReadinessSmokeTests
                 Action = OrderAction.Buy,
                 Quantity = 10m,
                 EntryPrice = 50.00m,
-                EntryTime = AsOf.AddHours(10),
-                ExitTime = AsOf.AddHours(11),
+                EntryTime = asOf.AddHours(10),
+                ExitTime = asOf.AddHours(11),
                 RealizedPnL = 25m
             });
             return trades;
@@ -500,6 +573,32 @@ public class SandboxReadinessSmokeTests
             _settings[key] = value!;
             return Task.CompletedTask;
         }
+    }
+
+    // S5-002 EOD-path smoke only: in-memory upsert-by-date store (the EOD enrichment second
+    // upsert needs a writable repo; the readiness-only tests keep the read-only posture).
+    private sealed class WritableSnapshotRepository : ISnapshotRepository
+    {
+        private readonly List<DailySnapshot> _snapshots;
+
+        public WritableSnapshotRepository(List<DailySnapshot> snapshots) => _snapshots = snapshots;
+
+        public Task SaveDailySnapshotAsync(DailySnapshot snapshot, CancellationToken ct = default)
+        {
+            var index = _snapshots.FindIndex(s => s.Date.Date == snapshot.Date.Date);
+            if (index >= 0)
+                _snapshots[index] = snapshot;
+            else
+                _snapshots.Add(snapshot);
+            return Task.CompletedTask;
+        }
+
+        public Task<DailySnapshot?> GetSnapshotAsync(DateTime date, CancellationToken ct = default) =>
+            Task.FromResult(_snapshots.FirstOrDefault(s => s.Date.Date == date.Date));
+
+        public Task<List<DailySnapshot>> GetSnapshotsAsync(DateTime startDate, DateTime endDate,
+            CancellationToken ct = default) =>
+            Task.FromResult(_snapshots.Where(s => s.Date >= startDate && s.Date <= endDate).ToList());
     }
 
     // Read-only repository fakes: any write THROWS, so a config/risk/order mutation anywhere

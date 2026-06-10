@@ -30,8 +30,11 @@ public class EndOfDayServiceTests
             new Trade { Commission = 1.5m, RealizedPnL = 100m, EntryTime = Today, ExitTime = Today },
             new Trade { Commission = 2.0m, RealizedPnL = null, EntryTime = Today, ExitTime = null });
         var marketData = CreateMarketDataMock(spy: 512.34m, vix: 18.5m, RegimeType.Cautious);
+        // Fully-wired happy path includes the report service — a missing registration now
+        // surfaces as a result warning (review S5-002), so zero-warnings means ALL wired.
+        var report = new RecordingDailyReportService(snapshots);
 
-        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData);
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData, report: report);
         var result = await service.RunAsync("run-1", CancellationToken.None);
 
         Assert.True(result.BrokerConnected);
@@ -241,6 +244,111 @@ public class EndOfDayServiceTests
         Assert.Equal(RegimeType.RiskOn, snapshot.MarketRegime);
     }
 
+    // ---------- S5-002: daily report invocation (Default D8) ----------
+
+    [Fact]
+    public async Task RunAsync_HappyPath_SendsDailyReportOnceWithTodayAfterEnrichedUpsert()
+    {
+        var snapshots = new CountingSnapshotRepository(
+            PriorDaySnapshot(netLiq: 100_000m));
+        var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(101_000m));
+        var trades = CreateTradeRepoMock();
+        var marketData = CreateMarketDataMock(spy: 500m, vix: 15m, RegimeType.RiskOn);
+        var report = new RecordingDailyReportService(snapshots);
+
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData, report: report);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        Assert.True(result.SnapshotPersisted);
+        Assert.True(result.SnapshotEnriched);
+        // Exactly one report per EOD run, carrying today's trading date.
+        var date = Assert.Single(report.Dates);
+        Assert.Equal(Today, date);
+        // Default D8 ordering: the report goes out AFTER the enriched-snapshot upsert —
+        // base upsert (1) + enrichment upsert (2) must both precede the send.
+        Assert.Equal(2, report.SnapshotSaveCountAtFirstSend);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReportServiceThrows_RunStillSucceedsSnapshotKeptWarningSurfaced()
+    {
+        var snapshots = new CountingSnapshotRepository(
+            PriorDaySnapshot(netLiq: 100_000m));
+        var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(101_000m));
+        var trades = CreateTradeRepoMock();
+        var marketData = CreateMarketDataMock(spy: 500m, vix: 15m, RegimeType.RiskOn);
+        var report = new RecordingDailyReportService(
+            snapshots, toThrow: new InvalidOperationException("report pipeline bug"));
+
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData, report: report);
+
+        // Core invariant: report failure must NEVER fail the EOD run (no throw escapes).
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        Assert.True(result.BrokerConnected);
+        Assert.True(result.SnapshotPersisted);
+        Assert.True(result.SnapshotEnriched);
+        // ...and must never un-persist the snapshot.
+        Assert.NotNull(await snapshots.GetSnapshotAsync(Today));
+        // Surfaced as a warning, not a failure.
+        Assert.Contains(result.Warnings, w => w.Contains(nameof(InvalidOperationException)));
+        broker.Verify(b => b.DisconnectAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_BrokerConnectFails_NoReportSent()
+    {
+        var snapshots = new CountingSnapshotRepository();
+        var broker = CreateBrokerMock(connectSucceeds: false, CreateAccount(100_000m));
+        var report = new RecordingDailyReportService(snapshots);
+
+        var service = CreateService(broker, snapshots, report: report);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        // Degraded (no-snapshot) run → NO report: a daily digest over a missing snapshot
+        // would be noise at best, stale data at worst.
+        Assert.False(result.SnapshotPersisted);
+        Assert.Empty(report.Dates);
+    }
+
+    [Fact]
+    public async Task RunAsync_NoSnapshotRepository_NoReportSent()
+    {
+        // Partial DI registration: repository missing → SnapshotPersisted is false → degraded
+        // run, so the report is skipped even though the broker connected fine.
+        var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(101_000m));
+        var report = new RecordingDailyReportService(snapshots: null);
+
+        var service = CreateService(broker, snapshotRepo: null, report: report);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        Assert.False(result.SnapshotPersisted);
+        Assert.NotEmpty(result.Warnings);
+        Assert.Empty(report.Dates);
+    }
+
+    [Fact]
+    public async Task RunAsync_NoDailyReportService_RunSucceedsAndWarningSurfaced()
+    {
+        // Review S5-002: an unregistered IDailyReportService must be VISIBLE (warning on the
+        // result, matching the ISnapshotRepository pattern), not a silent Debug-level skip —
+        // otherwise a wiring regression looks identical to a healthy run.
+        var snapshots = new CountingSnapshotRepository(
+            PriorDaySnapshot(netLiq: 100_000m));
+        var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(101_000m));
+        var trades = CreateTradeRepoMock();
+        var marketData = CreateMarketDataMock(spy: 500m, vix: 15m, RegimeType.RiskOn);
+
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData, report: null);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        // The run itself still succeeds end-to-end — the missing report service only warns.
+        Assert.True(result.SnapshotPersisted);
+        Assert.True(result.SnapshotEnriched);
+        Assert.Contains(result.Warnings, w => w.Contains("report service not registered"));
+        broker.Verify(b => b.DisconnectAsync(), Times.Once);
+    }
+
     [Fact]
     public async Task RunEndOfDay_ServiceUnregistered_DegradesWithoutThrow()
     {
@@ -292,10 +400,11 @@ public class EndOfDayServiceTests
 
     private static EndOfDayService CreateService(
         Mock<IBrokerService> broker,
-        ISnapshotRepository snapshotRepo,
+        ISnapshotRepository? snapshotRepo,
         Mock<IRiskAlertService>? alerts = null,
         Mock<ITradeRepository>? tradeRepo = null,
-        Mock<IMarketDataService>? marketData = null)
+        Mock<IMarketDataService>? marketData = null,
+        IDailyReportService? report = null)
     {
         alerts ??= CreateAlertMock();
         var calendar = new Mock<ICalendarService>();
@@ -329,7 +438,9 @@ public class EndOfDayServiceTests
             NullLogger<EndOfDayService>.Instance,
             snapshotRepo,
             tradeRepo?.Object,
-            marketData?.Object);
+            marketData?.Object,
+            operationalAlertService: null,
+            dailyReportService: report);
     }
 
     private static DailyOrchestrator CreateOrchestrator(IServiceProvider provider)
@@ -406,6 +517,36 @@ public class EndOfDayServiceTests
             HighWaterMark = netLiq,
             MaxDrawdown = 0m
         };
+    }
+
+    /// <summary>
+    /// S5-002 recording fake: captures every report invocation (date + the snapshot
+    /// repository's save count at first send, for the after-enrichment ordering assertion)
+    /// and optionally throws to exercise the report-failure-never-fails-the-run invariant.
+    /// </summary>
+    private sealed class RecordingDailyReportService : IDailyReportService
+    {
+        private readonly CountingSnapshotRepository? _snapshots;
+        private readonly Exception? _toThrow;
+
+        public List<DateTime> Dates { get; } = new();
+        public int SnapshotSaveCountAtFirstSend { get; private set; } = -1;
+
+        public RecordingDailyReportService(CountingSnapshotRepository? snapshots, Exception? toThrow = null)
+        {
+            _snapshots = snapshots;
+            _toThrow = toThrow;
+        }
+
+        public Task SendDailyReportAsync(DateTime date, CancellationToken cancellationToken = default)
+        {
+            Dates.Add(date);
+            if (SnapshotSaveCountAtFirstSend < 0 && _snapshots != null)
+                SnapshotSaveCountAtFirstSend = _snapshots.SaveCount;
+            if (_toThrow != null)
+                throw _toThrow;
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>

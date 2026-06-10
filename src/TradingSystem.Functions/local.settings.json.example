@@ -24,6 +24,8 @@
     "Discord:WebhookUrl": "YOUR_DISCORD_WEBHOOK_URL",
     "Discord:Username": "TradingSystem Risk",
 
+    "Reporting:WeeklyScorecardDay": "Friday",
+
     "Claude:ApiKey": "YOUR_CLAUDE_API_KEY",
     "Claude:GatewayApiKey": "YOUR_GATEWAY_API_KEY",
     "Claude:Model": "claude-sonnet-4-20250514",

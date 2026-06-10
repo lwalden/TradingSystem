@@ -48,6 +48,10 @@ var host = new HostBuilder()
             context.Configuration.GetSection("Polygon"));
         services.Configure<DiscordConfig>(
             context.Configuration.GetSection("Discord"));
+        // S5-002: reporting cadence (weekly readiness-scorecard day, default Friday — locked
+        // decision 5). Operational/observability config only — never risk parameters.
+        services.Configure<ReportingConfig>(
+            context.Configuration.GetSection("Reporting"));
         
         // Application Insights
         services.AddApplicationInsightsTelemetryWorkerService();
@@ -69,11 +73,17 @@ var host = new HostBuilder()
             sp.GetRequiredService<TradingSystem.Functions.DiscordRiskAlertService>());
         // S4-003: daily digest reuses the SAME webhook/config as risk alerts (no new secret) but
         // gets its own named client so the two senders' handlers/telemetry stay distinguishable.
-        services.AddHttpClient("DiscordDailyReport");
+        // S5-002: same 8s bound as DiscordRiskAlerts above — this POST now sits on the EOD timer
+        // path, and a hung report send must never stall the run (timeout surfaces as
+        // OperationCanceledException and is swallowed by the report's no-throw contract).
+        services.AddHttpClient("DiscordDailyReport", c => c.Timeout = TimeSpan.FromSeconds(8));
         services.AddSingleton<IDailyReportService, TradingSystem.Functions.DiscordDailyReportService>();
         services.AddSingleton<IRiskManager, RiskManager>();
         // S5-001: end-of-day pipeline — delegates the sync/stop-check/base-snapshot spine to
         // RiskManager (alert-only, locked decision 4) and enriches today's snapshot best-effort.
+        // S5-002: the registered IDailyReportService above flows into EndOfDayService's optional
+        // ctor parameter — the daily report goes out after snapshot persistence, in its own
+        // try/catch (report failure never fails the EOD run; degraded runs send no report).
         services.AddSingleton<IEndOfDayService, TradingSystem.Functions.EndOfDayService>();
         services.AddSingleton<IExecutionService, SimpleExecutionService>();
         services.AddSingleton<OptionsExecutionService>();
