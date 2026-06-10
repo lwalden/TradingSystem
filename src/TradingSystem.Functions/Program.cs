@@ -63,6 +63,9 @@ var host = new HostBuilder()
         services.AddHttpClient("DiscordDailyReport");
         services.AddSingleton<IDailyReportService, TradingSystem.Functions.DiscordDailyReportService>();
         services.AddSingleton<IRiskManager, RiskManager>();
+        // S5-001: end-of-day pipeline — delegates the sync/stop-check/base-snapshot spine to
+        // RiskManager (alert-only, locked decision 4) and enriches today's snapshot best-effort.
+        services.AddSingleton<IEndOfDayService, TradingSystem.Functions.EndOfDayService>();
         services.AddSingleton<IExecutionService, SimpleExecutionService>();
         services.AddSingleton<OptionsExecutionService>();
 

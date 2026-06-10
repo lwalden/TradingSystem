@@ -65,15 +65,34 @@ public class DailyOrchestrator
 
         try
         {
-            // TODO: Implement
-            // 1. Sync final positions and P&L
-            // 2. Log all fills, MAE/MFE
-            // 3. Update trade journal
-            // 4. Check for stop triggers
-            // 5. Save daily snapshot
-            // 6. Generate daily report
+            // Thin timer wrapper (S5-001 / Default D2): the EOD pipeline lives in
+            // IEndOfDayService. Same null-tolerant resolve style as pre-market.
+            var endOfDayService = _serviceProvider.GetService<IEndOfDayService>();
+            if (endOfDayService == null)
+            {
+                _logger.LogWarning(
+                    "IEndOfDayService not registered. Skipping end-of-day processing. RunId: {RunId}",
+                    runId);
+                return;
+            }
 
-            _logger.LogInformation("End-of-day processing complete. RunId: {RunId}", runId);
+            var result = await endOfDayService.RunAsync(runId, cancellationToken);
+
+            if (result.Warnings.Count > 0)
+            {
+                _logger.LogWarning(
+                    "End-of-day warnings. RunId: {RunId}. {Warnings}",
+                    runId,
+                    string.Join(" | ", result.Warnings));
+            }
+
+            _logger.LogInformation(
+                "End-of-day processing complete. RunId: {RunId}, BrokerConnected: {BrokerConnected}, SnapshotPersisted: {SnapshotPersisted}, SnapshotEnriched: {SnapshotEnriched}, StopTriggered: {StopTriggered}",
+                runId,
+                result.BrokerConnected,
+                result.SnapshotPersisted,
+                result.SnapshotEnriched,
+                result.StopTriggered);
         }
         catch (Exception ex)
         {
