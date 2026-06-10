@@ -49,7 +49,8 @@ public class EndOfDayService : IEndOfDayService
         {
             // Default D3: never persist stale data — no snapshot write, no throw.
             _logger.LogWarning(
-                "Could not connect to broker at end-of-day. No snapshot will be written. RunId: {RunId}",
+                "Could not connect to broker at end-of-day. No snapshot will be written. RunId: {RunId}. " +
+                "Verify TWS/IB Gateway is running and the API port/client-id match config.",
                 runId);
             return result;
         }
@@ -60,15 +61,20 @@ public class EndOfDayService : IEndOfDayService
             // Sync + stop check + base snapshot — existing RiskManager semantics as-is
             // (broker account/position sync, transition-gated stop alerts, base upsert).
             var metrics = await _riskManager.GetRiskMetricsAsync(cancellationToken);
+            // The base upsert happens inside RiskManager whenever a repository is registered
+            // (see IEndOfDayService doc contract) — record it here, not in enrichment, so an
+            // enrichment read-back failure can never false-negative the persisted base snapshot.
+            result.SnapshotPersisted = _snapshotRepository != null;
             result.StopTriggered =
                 metrics.DailyStopTriggered || metrics.WeeklyStopTriggered || metrics.DrawdownHaltTriggered;
 
             await EnrichSnapshotAsync(runId, result, cancellationToken);
 
             _logger.LogInformation(
-                "End-of-day pipeline finished. RunId: {RunId}, SnapshotPersisted: {SnapshotPersisted}, StopTriggered: {StopTriggered}, Warnings: {WarningCount}",
+                "End-of-day pipeline finished. RunId: {RunId}, SnapshotPersisted: {SnapshotPersisted}, SnapshotEnriched: {SnapshotEnriched}, StopTriggered: {StopTriggered}, Warnings: {WarningCount}",
                 runId,
                 result.SnapshotPersisted,
+                result.SnapshotEnriched,
                 result.StopTriggered,
                 result.Warnings.Count);
 
@@ -90,7 +96,8 @@ public class EndOfDayService : IEndOfDayService
         if (_snapshotRepository == null)
         {
             _logger.LogWarning(
-                "ISnapshotRepository not registered; end-of-day snapshot not persisted. RunId: {RunId}",
+                "ISnapshotRepository not registered; end-of-day snapshot not persisted. RunId: {RunId}. " +
+                "Check ISnapshotRepository registration in Program.cs.",
                 runId);
             result.Warnings.Add("Snapshot repository not registered; snapshot not persisted.");
             return;
@@ -103,15 +110,13 @@ public class EndOfDayService : IEndOfDayService
             if (snapshot == null)
             {
                 _logger.LogWarning(
-                    "Base snapshot for {Date} not found after risk sync; enrichment skipped. RunId: {RunId}",
+                    "Base snapshot for {Date} not found after risk sync; enrichment skipped. RunId: {RunId}. " +
+                    "RiskManager base upsert may have been skipped — check ISnapshotRepository registration / snapshot store.",
                     today,
                     runId);
                 result.Warnings.Add($"Base snapshot for {today:yyyy-MM-dd} not found; enrichment skipped.");
                 return;
             }
-
-            // The base snapshot is persisted regardless of how enrichment fares below.
-            result.SnapshotPersisted = true;
 
             if (_tradeRepository != null)
             {
@@ -134,6 +139,7 @@ public class EndOfDayService : IEndOfDayService
             }
 
             await _snapshotRepository.SaveDailySnapshotAsync(snapshot, cancellationToken);
+            result.SnapshotEnriched = true;
         }
         catch (Exception ex)
         {

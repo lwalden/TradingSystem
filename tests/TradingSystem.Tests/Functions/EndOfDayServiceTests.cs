@@ -36,6 +36,7 @@ public class EndOfDayServiceTests
 
         Assert.True(result.BrokerConnected);
         Assert.True(result.SnapshotPersisted);
+        Assert.True(result.SnapshotEnriched);
         Assert.Empty(result.Warnings);
 
         var snapshot = await snapshots.GetSnapshotAsync(Today);
@@ -151,8 +152,10 @@ public class EndOfDayServiceTests
         var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData);
         var result = await service.RunAsync("run-1", CancellationToken.None);
 
-        // Default D4: enrichment failure never loses the RiskManager-persisted base snapshot.
+        // Default D4: enrichment failure never loses the RiskManager-persisted base snapshot,
+        // and the result reflects exactly that: base persisted, enrichment NOT applied.
         Assert.True(result.SnapshotPersisted);
+        Assert.False(result.SnapshotEnriched);
         Assert.NotEmpty(result.Warnings);
         var snapshot = await snapshots.GetSnapshotAsync(Today);
         Assert.NotNull(snapshot);
@@ -181,14 +184,39 @@ public class EndOfDayServiceTests
     [Fact]
     public async Task RunAsync_HappyPath_DisconnectsExactlyOnce()
     {
-        var snapshots = new CountingSnapshotRepository();
+        // Seeded prior-day snapshot → true happy path: base upsert + enrichment both succeed.
+        var snapshots = new CountingSnapshotRepository(
+            PriorDaySnapshot(netLiq: 100_000m));
         var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(100_000m));
         var trades = CreateTradeRepoMock();
         var marketData = CreateMarketDataMock(spy: 500m, vix: 15m, RegimeType.RiskOn);
 
         var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData);
-        await service.RunAsync("run-1", CancellationToken.None);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
 
+        Assert.True(result.BrokerConnected);
+        Assert.True(result.SnapshotPersisted);
+        Assert.True(result.SnapshotEnriched);
+        broker.Verify(b => b.DisconnectAsync(), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsync_EnrichmentReadBackThrows_StillReportsBasePersisted()
+    {
+        // Regression for the SnapshotPersisted contract: the base upsert happens inside
+        // RiskManager, so an enrichment read-back failure must NOT false-negative the flag.
+        var snapshots = new ReadBackThrowingSnapshotRepository(
+            new CountingSnapshotRepository(PriorDaySnapshot(netLiq: 100_000m)));
+        var broker = CreateBrokerMock(connectSucceeds: true, CreateAccount(101_000m));
+        var trades = CreateTradeRepoMock();
+        var marketData = CreateMarketDataMock(spy: 500m, vix: 15m, RegimeType.RiskOn);
+
+        var service = CreateService(broker, snapshots, tradeRepo: trades, marketData: marketData);
+        var result = await service.RunAsync("run-1", CancellationToken.None);
+
+        Assert.True(result.SnapshotPersisted);
+        Assert.False(result.SnapshotEnriched);
+        Assert.NotEmpty(result.Warnings);
         broker.Verify(b => b.DisconnectAsync(), Times.Once);
     }
 
@@ -378,6 +406,30 @@ public class EndOfDayServiceTests
             HighWaterMark = netLiq,
             MaxDrawdown = 0m
         };
+    }
+
+    /// <summary>
+    /// Wraps a snapshot repository so range reads and saves work (RiskManager's base-upsert
+    /// path), but the single-date read-back used by enrichment throws — isolating the
+    /// enrichment read-back failure mode.
+    /// </summary>
+    private sealed class ReadBackThrowingSnapshotRepository : ISnapshotRepository
+    {
+        private readonly ISnapshotRepository _inner;
+
+        public ReadBackThrowingSnapshotRepository(ISnapshotRepository inner) => _inner = inner;
+
+        public Task SaveDailySnapshotAsync(DailySnapshot snapshot, CancellationToken cancellationToken = default)
+            => _inner.SaveDailySnapshotAsync(snapshot, cancellationToken);
+
+        public Task<DailySnapshot?> GetSnapshotAsync(DateTime date, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("snapshot read-back unavailable");
+
+        public Task<List<DailySnapshot>> GetSnapshotsAsync(
+            DateTime startDate,
+            DateTime endDate,
+            CancellationToken cancellationToken = default)
+            => _inner.GetSnapshotsAsync(startDate, endDate, cancellationToken);
     }
 
     /// <summary>

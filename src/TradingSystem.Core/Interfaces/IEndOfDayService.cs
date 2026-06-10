@@ -21,8 +21,15 @@ public class EndOfDayResult
     /// <summary>Whether the broker connection succeeded. False → no snapshot was written (never persist stale data).</summary>
     public bool BrokerConnected { get; set; }
 
-    /// <summary>Whether today's DailySnapshot was persisted (base upsert via RiskManager).</summary>
+    /// <summary>
+    /// Whether today's DailySnapshot was persisted (base upsert via RiskManager). True whenever
+    /// the broker connected and a snapshot repository is registered — set right after the risk
+    /// sync, independent of how enrichment fares (see <see cref="SnapshotEnriched"/>).
+    /// </summary>
     public bool SnapshotPersisted { get; set; }
+
+    /// <summary>Whether the best-effort enrichment second upsert succeeded (activity + market context layered onto the base snapshot).</summary>
+    public bool SnapshotEnriched { get; set; }
 
     /// <summary>Whether any stop (daily/weekly/drawdown) is triggered per existing RiskManager evaluation. Alert-only — no halt action.</summary>
     public bool StopTriggered { get; set; }

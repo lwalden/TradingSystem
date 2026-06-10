@@ -87,10 +87,11 @@ public class DailyOrchestrator
             }
 
             _logger.LogInformation(
-                "End-of-day processing complete. RunId: {RunId}, BrokerConnected: {BrokerConnected}, SnapshotPersisted: {SnapshotPersisted}, StopTriggered: {StopTriggered}",
+                "End-of-day processing complete. RunId: {RunId}, BrokerConnected: {BrokerConnected}, SnapshotPersisted: {SnapshotPersisted}, SnapshotEnriched: {SnapshotEnriched}, StopTriggered: {StopTriggered}",
                 runId,
                 result.BrokerConnected,
                 result.SnapshotPersisted,
+                result.SnapshotEnriched,
                 result.StopTriggered);
         }
         catch (Exception ex)
