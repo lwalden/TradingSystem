@@ -13,9 +13,18 @@ public class SleeveValidationThresholds
     public SleeveThresholds Income { get; set; } = new();
     public SleeveThresholds Options { get; set; } = new();
 
+    /// <summary>
+    /// Minimum current sleeve value required before a metrics-Ready sleeve may be
+    /// recommended for live activation (ADR-020/roadmap; owner-confirmed $100k 2026-06-09).
+    /// Read-only gate consumed by the readiness scorecard (S4-002) — it never triggers
+    /// activation, only annotates the recommendation.
+    /// </summary>
+    public decimal MinimumLiveCapitalPerSleeve { get; set; } = 100_000m;
+
     // ADR-010 values (owner-confirmed 2026-06-09 as authoritative, identical for both sleeves):
     // hit rate >=45%, profit factor >=1.3, max drawdown <=15%, minimum 12 weeks observed,
-    // and "profitable OR outperform S&P 500" required.
+    // and "profitable OR outperform S&P 500" required. Minimum live capital $100k/sleeve
+    // (owner-confirmed 2026-06-09).
     public static SleeveValidationThresholds Defaults() => new();
 }
 
