@@ -51,8 +51,10 @@ public class SandboxReadinessSmokeTests
         Assert.Equal(2, scorecards.Count);
         var income = Assert.Single(scorecards, c => c.Sleeve == SleeveType.Income);
         var options = Assert.Single(scorecards, c => c.Sleeve == SleeveType.Tactical);
-        Assert.Equal(SleeveReadinessState.Ready, income.Readiness);
-        Assert.Equal(SleeveReadinessState.Ready, options.Readiness);
+        Assert.True(income.Readiness == SleeveReadinessState.Ready,
+            $"Income not Ready: {income.Rationale}");
+        Assert.True(options.Readiness == SleeveReadinessState.Ready,
+            $"Options not Ready: {options.Rationale}");
         Assert.NotNull(income.Evaluation.AppliedThresholds);
         Assert.NotNull(options.Evaluation.AppliedThresholds);
 
@@ -206,7 +208,8 @@ public class SandboxReadinessSmokeTests
 
         // Provably inert: zero metered HTTP (and the throwing gateway factory was never hit,
         // or the calls above would have surfaced its InvalidOperationException as a send).
-        Assert.Equal(0, metered.InvocationCount);
+        Assert.True(metered.InvocationCount == 0,
+            "metered direct-API HTTP occurred — DirectApiFallbackEnabled default must remain false");
 
         // The readiness path then runs rules-only: the delivered report's regime is the
         // deterministic seeded snapshot value, untouched by any AI leg.
@@ -481,6 +484,8 @@ public class SandboxReadinessSmokeTests
     // ---- S3-003/S3-006 inert-AI harness (mirrors DailyOrchestratorSmokeTests) ----
 
     // Counts would-be metered direct Anthropic API sends; must stay zero (fallback off).
+    // Count-first, then throw: the metered API must never be reachable from test code,
+    // and a hit still registers in InvocationCount for the zero-call assertions.
     private sealed class MeteredCountingHandler : HttpMessageHandler
     {
         public int InvocationCount { get; private set; }
@@ -489,13 +494,8 @@ public class SandboxReadinessSmokeTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             InvocationCount++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    "{\"content\":[{\"type\":\"text\",\"text\":\"{}\"}]}",
-                    System.Text.Encoding.UTF8,
-                    "application/json")
-            });
+            throw new InvalidOperationException(
+                "metered Anthropic API must not be called in test/smoke context");
         }
     }
 

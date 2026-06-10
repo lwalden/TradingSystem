@@ -37,12 +37,14 @@ internal static class ReadinessSmokeSection
         var snapshotRepo = new InertSnapshotRepository(SeedSnapshots());
         var tradeRepo = new InertTradeRepository(SeedTrades());
 
+        // Single scorecard service shared by both checks below (mirrors the xUnit fixture).
+        var scorecardService = new SleeveReadinessScorecardService(snapshotRepo, tradeRepo, configRepo);
+
         // [first] Sleeve readiness scorecards (S4-001 thresholds -> S4-002 scorecards).
         Console.WriteLine($"[{firstIndex}/{totalTests}] Sleeve readiness scorecards (stubbed repos, deterministic)...");
         IReadOnlyList<SleeveReadinessScorecard>? scorecards = null;
         try
         {
-            var scorecardService = new SleeveReadinessScorecardService(snapshotRepo, tradeRepo, configRepo);
             scorecards = await scorecardService.GenerateAsync(AsOf);
             if (scorecards.Count != 2)
                 throw new InvalidOperationException($"expected 2 sleeve scorecards, got {scorecards.Count}");
@@ -58,7 +60,8 @@ internal static class ReadinessSmokeSection
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"FAIL: {ex.Message}");
+            Console.WriteLine($"FAIL [{ex.GetType().Name}]: {ex.Message}" +
+                (ex.InnerException is { } inner ? $" (inner: {inner.Message})" : string.Empty));
             failed++;
         }
 
@@ -80,21 +83,23 @@ internal static class ReadinessSmokeSection
                 snapshotRepo,
                 tradeRepo,
                 loggerFactory.CreateLogger<DiscordDailyReportService>(),
-                new SleeveReadinessScorecardService(snapshotRepo, tradeRepo, configRepo));
+                scorecardService);
 
             await reportService.SendDailyReportAsync(AsOf);
             if (handler.InvocationCount != 1)
                 throw new InvalidOperationException($"expected exactly 1 stubbed POST, got {handler.InvocationCount}");
             var body = handler.Bodies.Single();
             if (!body.Contains("Daily Report") || !body.Contains("Readiness"))
-                throw new InvalidOperationException("report payload missing summary or readiness embed");
+                throw new InvalidOperationException(
+                    $"report payload missing summary or readiness embed; body[..200]: {body[..Math.Min(200, body.Length)]}");
             Console.WriteLine($"  OK: payload captured by stub handler ({body.Length} chars), summary + readiness embeds present");
             Console.WriteLine("  OK: no live Discord POST (HTTP terminated at in-memory stub)");
             passed++;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"FAIL: {ex.Message}");
+            Console.WriteLine($"FAIL [{ex.GetType().Name}]: {ex.Message}" +
+                (ex.InnerException is { } inner ? $" (inner: {inner.Message})" : string.Empty));
             failed++;
         }
 
@@ -126,6 +131,29 @@ internal static class ReadinessSmokeSection
             });
             if (!string.IsNullOrEmpty(raw))
                 throw new InvalidOperationException("inert AI unexpectedly produced content");
+            Console.WriteLine("  OK: non-generic AnalyzeAsync yielded no content (caller falls to rules)");
+
+            // Generic path throws into the caller's try/catch -> deterministic rules
+            // (mirrors the xUnit twin's Assert.ThrowsAsync<InvalidOperationException>).
+            var genericThrew = false;
+            try
+            {
+                await claude.AnalyzeAsync<RegimeStub>(new AIAnalysisRequest
+                {
+                    StrategyId = "readiness-smoke",
+                    SystemPrompt = "sys",
+                    UserPrompt = "user"
+                });
+            }
+            catch (InvalidOperationException)
+            {
+                genericThrew = true;
+            }
+            if (!genericThrew)
+                throw new InvalidOperationException(
+                    "generic AnalyzeAsync<T> unexpectedly succeeded on inert AI (expected InvalidOperationException)");
+            Console.WriteLine("  OK: generic AnalyzeAsync<T> threw InvalidOperationException — caller falls back to deterministic rules");
+
             if (metered.InvocationCount != 0)
                 throw new InvalidOperationException($"metered API was hit {metered.InvocationCount} time(s)");
             Console.WriteLine("  OK: gateway never invoked, zero metered calls — regime stays deterministic rules");
@@ -133,7 +161,8 @@ internal static class ReadinessSmokeSection
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"FAIL: {ex.Message}");
+            Console.WriteLine($"FAIL [{ex.GetType().Name}]: {ex.Message}" +
+                (ex.InnerException is { } inner ? $" (inner: {inner.Message})" : string.Empty));
             failed++;
         }
 
@@ -224,15 +253,19 @@ internal static class ReadinessSmokeSection
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            // Count first (preserves the zero-invocation assertions), then refuse the call:
+            // the metered direct Anthropic API must never be reachable from test/smoke code.
             InvocationCount++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    "{\"content\":[{\"type\":\"text\",\"text\":\"{}\"}]}",
-                    System.Text.Encoding.UTF8,
-                    "application/json")
-            });
+            throw new InvalidOperationException(
+                "metered Anthropic API must not be called in test/smoke context");
         }
+    }
+
+    // Deserialization target for the generic AnalyzeAsync<T> inert check (mirrors the
+    // xUnit twin's RegimeStub — the console project has no reference to that fixture).
+    private sealed class RegimeStub
+    {
+        public string? Regime { get; set; }
     }
 
     private sealed class ThrowingGatewayFactory : IHttpClientFactory
