@@ -1,0 +1,5 @@
+# Pin shell scripts to LF regardless of core.autocrlf.
+# Why: with autocrlf=true, checkouts smudge *.sh to CRLF, which breaks bash
+# ("$'\r': command not found") — this took out the .claude sprint hooks after
+# a fresh checkout on 2026-06-10. Index is already LF for all tracked .sh files.
+*.sh text eol=lf
