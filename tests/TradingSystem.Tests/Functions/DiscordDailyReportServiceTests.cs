@@ -118,7 +118,8 @@ public class DiscordDailyReportServiceTests
 
         public Fixture(DiscordConfig config, StubHandler handler,
             DailySnapshot? snapshot, List<Trade>? trades,
-            IReadOnlyList<SleeveReadinessScorecard>? scorecards = null)
+            IReadOnlyList<SleeveReadinessScorecard>? scorecards = null,
+            ISleeveReadinessScorecardService? scorecardServiceOverride = null)
         {
             Handler = handler;
             Snapshots.Setup(s => s.GetSnapshotAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
@@ -127,8 +128,8 @@ public class DiscordDailyReportServiceTests
                     It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(trades ?? new List<Trade>());
 
-            ISleeveReadinessScorecardService? scorecardService = null;
-            if (scorecards != null)
+            ISleeveReadinessScorecardService? scorecardService = scorecardServiceOverride;
+            if (scorecardService == null && scorecards != null)
             {
                 var mock = new Mock<ISleeveReadinessScorecardService>();
                 mock.Setup(m => m.GenerateAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
@@ -472,6 +473,43 @@ public class DiscordDailyReportServiceTests
     {
         var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
             Snapshot(), new List<Trade> { Fill("MSFT") }, scorecards: null);
+
+        await fx.Service.SendDailyReportAsync(ReportDate);
+
+        Assert.Equal(1, fx.Handler.InvocationCount);
+        var body = Assert.Single(fx.Handler.Bodies);
+        Assert.DoesNotContain("Readiness", body);
+        Assert.Equal(0, LogCount(fx.Logger, LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task ReadinessSection_ScorecardFailure_OmitsSectionWithWarning_CoreReportStillSent()
+    {
+        // Documented contract: the readiness section is best-effort — a scorecard failure must
+        // NEVER drop the core daily report. It degrades to a warning and the section is omitted.
+        var throwing = new Mock<ISleeveReadinessScorecardService>();
+        throwing.Setup(m => m.GenerateAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("scorecard store unavailable"));
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT") }, scorecardServiceOverride: throwing.Object);
+
+        await fx.Service.SendDailyReportAsync(ReportDate);
+
+        // Core report still POSTed exactly once, without the readiness embed.
+        Assert.Equal(1, fx.Handler.InvocationCount);
+        var body = Assert.Single(fx.Handler.Bodies);
+        Assert.DoesNotContain("Readiness", body);
+        // Degrades to a warning (section omitted), never an error/throw.
+        Assert.True(LogCount(fx.Logger, LogLevel.Warning) >= 1, "scorecard failure should warn");
+        Assert.Equal(0, LogCount(fx.Logger, LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task ReadinessSection_EmptyScorecards_OmitsSection_CoreReportStillSent()
+    {
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT") },
+            scorecards: new List<SleeveReadinessScorecard>());
 
         await fx.Service.SendDailyReportAsync(ReportDate);
 
