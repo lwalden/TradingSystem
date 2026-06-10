@@ -17,17 +17,14 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" Version="4.3.1" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="1.16.2" />
-    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="3.0.0" />
+    <!-- S5-004r: MUST stay on the classic 2.x line. AI 3.x is OTel-based and REMOVED classic
+         API types (e.g. ITelemetryInitializer) that Functions.Worker.ApplicationInsights is
+         built against — pairing 3.x with it makes the isolated worker crash at DI bootstrap
+         with TypeLoadException and the host recycles until the worker-restart cap. -->
+    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.23.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
     <PackageReference Include="Azure.Identity" Version="1.18.0" />
     <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.0" />
-    <!-- Transitive lift: GHSA-g94r-2vxg-569j (OpenTelemetry.Api < 1.15.3, excessive memory
-         allocation parsing propagation headers). Pulled in at 1.15.0 via
-         Microsoft.ApplicationInsights.WorkerService 3.0.0 -> Azure.Monitor.OpenTelemetry.Exporter.
-         Pinned to the first patched version; remove once ApplicationInsights.WorkerService ships
-         a patched chain. Tests and SmokeTest inherit this pin via their project reference to
-         Functions — if either drops that reference, it needs its own pin. -->
-    <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
   </ItemGroup>
   
   <ItemGroup>

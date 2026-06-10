@@ -40,6 +40,12 @@ var host = new HostBuilder()
             context.Configuration.GetSection("TradingSystem"));
         services.Configure<TacticalConfig>(
             context.Configuration.GetSection("TradingSystem:Tactical"));
+        // S5-004r: OptionsSleeveManager takes the bare TacticalConfig (its siblings take
+        // IOptions<TacticalConfig>), so the bare type must be resolvable or the worker dies
+        // at DI validation on boot. This was masked by the AI-package TypeLoadException —
+        // the unit suite never builds the full host graph, only the real `func start` does.
+        services.AddSingleton(sp =>
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TacticalConfig>>().Value);
         services.Configure<IBKRConfig>(
             context.Configuration.GetSection("IBKR"));
         services.Configure<LocalStorageConfig>(
