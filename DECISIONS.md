@@ -301,7 +301,7 @@ Start with daily batch, assess need for intraday monitoring (especially near-exp
 Potential future addition after options sleeve is validated.
 
 ### PDR-004: ~~Sleeve-Level Validation Thresholds for Live Activation~~ RESOLVED
-**Resolution:** Resolved in code by S4-001 (PR #81), owner-confirmed 2026-06-09 — per-sleeve paper gate: hit rate ≥45%, profit factor ≥1.3, max drawdown ≤15%, ≥12 weeks observed, profitable-OR-beat-SPY (strict >), $100k minimum live capital per sleeve. Values of record in `src/TradingSystem.Core/Configuration/SleeveValidationThresholds.cs`; evaluation-only via the `IConfigRepository` settings seam (`SleeveValidationThresholds`), never on any order/execution path; consumed by the S4-002 scorecard. PDR-005 (live sleeve set/capital split) remains pending.
+**Resolution:** Resolved in code by S4-001 (PR #81), owner-confirmed 2026-06-09 — per-sleeve paper gate: hit rate ≥45%, profit factor ≥1.3, max drawdown ≤15%, ≥12 weeks observed, profitable-OR-beat-SPY (strict >), $100k minimum live capital per sleeve. Values of record in `src/TradingSystem.Core/Configuration/SleeveValidationThresholds.cs`; evaluation-only via the `IConfigRepository` settings seam (key `"sleeveValidationThresholds"`), never on any order/execution path; consumed by the S4-002 scorecard. PDR-005 (live sleeve set/capital split) remains pending.
 
 ### PDR-005: Initial Live Sleeve Set and Capital Split
 **Blocking:** Live transition execution plan | **Needs:** Paper validation outputs + owner decision
