@@ -250,6 +250,48 @@ public class DiscordDailyReportServiceTests
     }
 
     [Fact]
+    public async Task Payload_FieldOrder_LeadsWithDailyPnLAndRegime_NetLiquidationLast()
+    {
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT"), Fill("JNJ") });
+
+        await fx.Service.SendDailyReportAsync(ReportDate);
+
+        var body = Assert.Single(fx.Handler.Bodies);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var summary = doc.RootElement.GetProperty("embeds")[0];
+        var fieldNames = summary.GetProperty("fields").EnumerateArray()
+            .Select(f => f.GetProperty("name").GetString())
+            .ToList();
+
+        // Mobile-first order (review S4-003): the day's news leads, net liquidation is context
+        // and renders LAST — even on trade days when a Fills field is present.
+        Assert.Equal("Daily P&L", fieldNames[0]);
+        Assert.Equal("Market Regime", fieldNames[1]);
+        Assert.Equal("Net Liquidation", fieldNames[^1]);
+        Assert.Contains("Fills", fieldNames);
+    }
+
+    [Fact]
+    public async Task Payload_Description_CarriesOutcomeLine_DirectionMagnitudeAndTradeCount()
+    {
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT"), Fill("JNJ") });
+
+        await fx.Service.SendDailyReportAsync(ReportDate);
+
+        var body = Assert.Single(fx.Handler.Bodies);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        var description = doc.RootElement.GetProperty("embeds")[0].GetProperty("description").GetString();
+
+        // First-read mobile text: direction, magnitude, percent, activity.
+        Assert.NotNull(description);
+        Assert.StartsWith("Up $1,234.56", description);
+        Assert.Contains("0.49", description);
+        Assert.Contains("2 trade(s)", description);
+    }
+
+    [Fact]
     public async Task Payload_DisablesMentionParsing()
     {
         // Same anti-ping hardening as the risk alerts: content can never @everyone/@here.
@@ -404,10 +446,14 @@ public class DiscordDailyReportServiceTests
 
         Assert.Equal(1, fx.Handler.InvocationCount);
         var body = Assert.Single(fx.Handler.Bodies);
-        Assert.Contains("No trades today", body);
-        // Still a structurally valid embed payload.
+        // Still a structurally valid embed payload; the zero-trade description carries the
+        // outcome line plus the regime ("... — no trades — regime: Cautious.").
         using var doc = System.Text.Json.JsonDocument.Parse(body);
         Assert.True(doc.RootElement.GetProperty("embeds").GetArrayLength() >= 1);
+        var description = doc.RootElement.GetProperty("embeds")[0].GetProperty("description").GetString();
+        Assert.NotNull(description);
+        Assert.Contains("no trades", description);
+        Assert.Contains("regime: Cautious", description);
         Assert.Equal(0, LogCount(fx.Logger, LogLevel.Error));
     }
 
@@ -466,6 +512,17 @@ public class DiscordDailyReportServiceTests
         Assert.DoesNotContain(fieldTexts, t => t.Contains("999"));
         // Confidence appears inline per sleeve.
         Assert.Contains(fieldTexts, t => t.Contains("Income") && t.Contains("75"));
+        // MeetsMinimumCapital defaults false on the test scorecard → human copy, not jargon.
+        Assert.Contains(fieldTexts, t => t.Contains("below capital minimum"));
+        Assert.DoesNotContain(fieldTexts, t => t.Contains("capital-gated"));
+
+        // Readiness embed: per-sleeve status line up front, recommendation-only disclaimer
+        // in the footer (review S4-003 mobile-first copy).
+        var readinessEmbed = doc.RootElement.GetProperty("embeds").EnumerateArray()
+            .Single(e => (e.GetProperty("title").GetString() ?? string.Empty).Contains("Readiness"));
+        Assert.Equal("Income: Ready", readinessEmbed.GetProperty("description").GetString());
+        Assert.Contains("Recommendation-only",
+            readinessEmbed.GetProperty("footer").GetProperty("text").GetString());
     }
 
     [Fact]

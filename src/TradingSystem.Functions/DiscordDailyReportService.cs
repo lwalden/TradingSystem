@@ -151,22 +151,24 @@ public class DiscordDailyReportService : IDailyReportService
 
     private static Embed BuildSummaryEmbed(DateTime day, DailySnapshot snapshot, List<Trade> trades)
     {
+        // Mobile-first field order (review S4-003): the day's NEWS leads (P&L, regime), then
+        // detail, then costs; net liquidation is context — it renders LAST (added below, after
+        // the optional fills field, so it stays last on trade days too).
         var fields = new List<EmbedField>
         {
-            new("Net Liquidation", Money(snapshot.NetLiquidationValue), true),
             new("Daily P&L", $"{Money(snapshot.DailyPnL)} ({Percent(snapshot.DailyPnLPercent)})", true),
+            new("Market Regime", snapshot.MarketRegime.ToString(), true),
             new("Realized P&L", Money(snapshot.RealizedPnL), true),
             new("Unrealized P&L", Money(snapshot.UnrealizedPnL), true),
-            new("Open Positions", snapshot.OpenPositions.ToString(CultureInfo.InvariantCulture), true),
-            new("Market Regime", snapshot.MarketRegime.ToString(), true),
             new("Trades Executed", trades.Count.ToString(CultureInfo.InvariantCulture), true),
+            new("Open Positions", snapshot.OpenPositions.ToString(CultureInfo.InvariantCulture), true),
             // ADR-023: platform and brokerage costs are DISTINCT fields — never conflated.
             // Platform spend (Azure+Polygon+Claude) is tracked against the ceiling outside the
             // snapshot store, so this field carries the scope/ceiling, not a fabricated number.
-            new("Platform Costs", "Azure + Polygon + Claude — $100/mo ceiling (ADR-023); tracked separately", false),
+            new("Platform Costs", "Tracked separately (≤ $100/mo ceiling, ADR-023)", false),
             new("Brokerage Costs",
                 $"Commissions today: {Money(snapshot.CommissionsPaid)} | " +
-                $"Monthly forecast ({TradingDaysPerMonth} trading days at today's pace): {Money(snapshot.CommissionsPaid * TradingDaysPerMonth)}",
+                $"Monthly forecast ({TradingDaysPerMonth} trading days at today's pace): ~{Money(snapshot.CommissionsPaid * TradingDaysPerMonth)}",
                 false)
         };
 
@@ -182,16 +184,25 @@ public class DiscordDailyReportService : IDailyReportService
                     return t.RealizedPnL.HasValue ? $"{line} (P&L {Money(t.RealizedPnL.Value)})" : line;
                 });
             var overflow = trades.Count > MaxRenderedFills
-                ? $"{Environment.NewLine}… and {trades.Count - MaxRenderedFills} more"
+                ? $"{Environment.NewLine}... and {trades.Count - MaxRenderedFills} more"
                 : string.Empty;
             fields.Add(new EmbedField("Fills", string.Join(Environment.NewLine, lines) + overflow, false));
         }
 
+        // Context, not news — deliberately the LAST field (after the optional fills above).
+        fields.Add(new EmbedField("Net Liquidation", Money(snapshot.NetLiquidationValue), true));
+
+        // First-read mobile text: the description carries the day's signal (direction, magnitude,
+        // activity) before any field renders. The Up/Down word carries the sign, so both the
+        // dollar amount and the percent render as magnitudes.
+        var direction = snapshot.DailyPnL >= 0 ? "Up" : "Down";
+        var outcome = $"{direction} {Money(Math.Abs(snapshot.DailyPnL))} ({Percent(Math.Abs(snapshot.DailyPnLPercent))})";
+
         return new Embed(
-            title: $"Daily Report — {day:yyyy-MM-dd}",
+            title: $"Daily Report — {day.ToString("ddd MMM d, yyyy", CultureInfo.InvariantCulture)}",
             description: trades.Count == 0
-                ? "No trades today."
-                : $"{trades.Count} trade(s) executed.",
+                ? $"{outcome} — no trades — regime: {snapshot.MarketRegime}."
+                : $"{outcome} — {trades.Count.ToString(CultureInfo.InvariantCulture)} trade(s)",
             color: snapshot.DailyPnL >= 0 ? 3066993 /* green */ : 15158332 /* red */,
             // The report is ABOUT this trading day — stamping the day (not wall-clock now) keeps
             // the payload deterministic for a given snapshot/trade set.
@@ -217,20 +228,24 @@ public class DiscordDailyReportService : IDailyReportService
             }
 
             var fields = scorecards.Select(sc => new EmbedField(
-                $"{sc.SleeveName} — {sc.Readiness}",
+                $"{sc.SleeveName} — {RenderReadiness(sc.Readiness)}",
                 // An undefined profit factor (no losing trades) renders as "∞ (no losses)" —
                 // NEVER the raw gate-passing sentinel (S4-002 renderer contract).
                 $"PF: {RenderProfitFactor(sc)} | Confidence: {Percent(sc.Confidence)} | " +
                 $"Closed trades: {sc.ClosedTradeCount.ToString(CultureInfo.InvariantCulture)}" +
-                (sc.MeetsMinimumCapital ? string.Empty : " | capital-gated"),
+                (sc.MeetsMinimumCapital ? string.Empty : " | below capital minimum"),
                 false)).ToArray();
 
             return new Embed(
                 title: "Sleeve Readiness (paper-validation gate)",
-                description: "Recommendation-only — never changes mode, risk, or orders.",
+                // First-read mobile text: per-sleeve status line (e.g. "Income: Ready | Options:
+                // Not Ready"); the recommendation-only disclaimer lives in the footer.
+                description: string.Join(" | ", scorecards.Select(sc =>
+                    $"{sc.SleeveName}: {RenderReadiness(sc.Readiness)}")),
                 color: 3447003 /* blue */,
                 timestamp: day.ToString("O", CultureInfo.InvariantCulture),
-                fields: fields);
+                fields: fields,
+                footer: new EmbedFooter("Recommendation-only — never changes mode, risk, or orders."));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -249,6 +264,15 @@ public class DiscordDailyReportService : IDailyReportService
         scorecard.IsProfitFactorUndefined
             ? "∞ (no losses)"
             : scorecard.Evaluation.ActualMetrics.ProfitFactor.ToString("0.##", CultureInfo.InvariantCulture);
+
+    // Human-readable readiness state for embed copy ("NotReady" → "Not Ready").
+    private static string RenderReadiness(SleeveReadinessState state) => state switch
+    {
+        SleeveReadinessState.Ready => "Ready",
+        SleeveReadinessState.NotReady => "Not Ready",
+        SleeveReadinessState.InsufficientData => "Insufficient Data",
+        _ => state.ToString()
+    };
 
     // POSTs the payload, honoring a 429 Retry-After with a bounded backoff (count + cumulative
     // wait budget). Degrades to a scrubbed log and returns (no throw) on non-2xx exhaustion or a
@@ -325,8 +349,18 @@ public class DiscordDailyReportService : IDailyReportService
     private static string Percent(decimal ratio) =>
         ratio.ToString("P2", CultureInfo.InvariantCulture);
 
-    // Discord embed shapes (lowercase property names match the webhook JSON contract).
-    private sealed record Embed(string title, string description, int color, string timestamp, EmbedField[] fields);
+    // Discord embed shapes (lowercase property names match the webhook JSON contract). A null
+    // footer is omitted from the payload rather than serialized as "footer": null.
+    private sealed record Embed(
+        string title,
+        string description,
+        int color,
+        string timestamp,
+        EmbedField[] fields,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        EmbedFooter? footer = null);
 
     private sealed record EmbedField(string name, string value, bool inline);
+
+    private sealed record EmbedFooter(string text);
 }
