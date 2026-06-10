@@ -22,7 +22,7 @@ namespace TradingSystem.Strategies.Services;
 /// "options-iron-condor", "-close" suffixes, ...), so strategy-id slicing cannot reliably
 /// reconstruct a sleeve — Trade.Sleeve can.
 /// </summary>
-public class SleeveReadinessScorecardService
+public class SleeveReadinessScorecardService : ISleeveReadinessScorecardService
 {
     // Observation window queried for snapshots/trades. The effective weeks-observed gate is
     // MinWeeksObserved (default 12); a year of lookback comfortably covers it.
@@ -34,7 +34,9 @@ public class SleeveReadinessScorecardService
     // Profit factor reported for a no-loss window with at least one winning trade. The raw
     // gross-profit/gross-loss ratio is undefined (division by zero); TradeStatistics reports 0
     // in that case, which would absurdly fail a flawless sleeve, so the scorecard substitutes
-    // a sentinel that passes any sane threshold while staying serializable/comparable.
+    // a sentinel that passes any sane threshold while staying serializable/comparable. The
+    // structural condition is surfaced via SleeveReadinessScorecard.IsProfitFactorUndefined so
+    // renderers show "∞ / no losses" rather than the raw sentinel.
     internal const decimal NoLossProfitFactor = 999m;
 
     private readonly ISnapshotRepository _snapshotRepository;
@@ -99,12 +101,17 @@ public class SleeveReadinessScorecardService
             .ToList();
         var stats = BuildStatistics(closedTrades);
 
+        // No losing trades with at least one winner: the gross-profit/gross-loss ratio is
+        // structurally undefined. The metrics carry a gate-passing sentinel (the gate must not
+        // fail a flawless sleeve), and the scorecard flags the condition for renderers.
+        var profitFactorUndefined = stats.LosingTrades == 0 && stats.WinningTrades > 0;
+
         var metrics = new SleeveMetrics
         {
             HitRatePercent = stats.WinRate,
-            ProfitFactor = stats.LosingTrades == 0
-                ? (stats.WinningTrades > 0 ? NoLossProfitFactor : 0m)
-                : stats.ProfitFactor,
+            ProfitFactor = profitFactorUndefined
+                ? NoLossProfitFactor
+                : stats.LosingTrades == 0 ? 0m : stats.ProfitFactor,
             MaxDrawdownPercent = MaxDrawdownPercent(sleeveSnapshots, sleeveValue),
             WeeksObserved = weeksObserved,
             TotalReturnPercent = ReturnPercent(sleeveSnapshots, sleeveValue),
@@ -132,7 +139,8 @@ public class SleeveReadinessScorecardService
             SleeveName = sleeveName,
             Sleeve = sleeve,
             AsOf = asOf,
-            Thresholds = result,
+            Evaluation = result,
+            IsProfitFactorUndefined = profitFactorUndefined,
             Readiness = readiness,
             ClosedTradeCount = closedTrades.Count,
             CurrentSleeveValue = currentValue,
@@ -223,9 +231,14 @@ public class SleeveReadinessScorecardService
         switch (readiness)
         {
             case SleeveReadinessState.InsufficientData:
+                // Self-contained: each arm names both the observation progress (weeks vs the
+                // MinWeeksObserved target) and the closed-trade sample, so the rationale is
+                // readable without the rest of the scorecard.
                 parts.Add(closedTradeCount == 0
-                    ? $"Insufficient data: no closed trades in the window ({actual.WeeksObserved} week(s) observed)."
-                    : $"Insufficient data: {actual.WeeksObserved} week(s) observed, below the {applied.MinWeeksObserved}-week minimum.");
+                    ? $"Insufficient data: no closed trades in the window ({actual.WeeksObserved} of " +
+                      $"{applied.MinWeeksObserved} minimum week(s) observed)."
+                    : $"Insufficient data: {actual.WeeksObserved} week(s) observed, below the " +
+                      $"{applied.MinWeeksObserved}-week minimum ({closedTradeCount} closed trade(s)).");
                 break;
 
             case SleeveReadinessState.NotReady:

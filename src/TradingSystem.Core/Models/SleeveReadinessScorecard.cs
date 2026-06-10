@@ -35,7 +35,16 @@ public class SleeveReadinessScorecard
     /// Per-metric pass/fail detail from <see cref="SleeveThresholds.Evaluate"/> — carries the
     /// observed <see cref="SleeveMetrics"/> and a snapshot of the applied thresholds.
     /// </summary>
-    public ThresholdResult Thresholds { get; init; } = new();
+    public ThresholdResult Evaluation { get; init; } = new();
+
+    /// <summary>
+    /// True when the profit factor is structurally undefined for the window: zero losing
+    /// trades with at least one winner, so the gross-profit/gross-loss ratio has no value.
+    /// <see cref="ThresholdResult.ActualMetrics"/>.ProfitFactor then carries a gate-passing
+    /// sentinel; renderers must branch on this flag and show "∞ / no losses" instead of the
+    /// raw sentinel value.
+    /// </summary>
+    public bool IsProfitFactorUndefined { get; init; }
 
     /// <summary>Overall readiness verdict (metrics only — capital gate reported separately).</summary>
     public SleeveReadinessState Readiness { get; init; }

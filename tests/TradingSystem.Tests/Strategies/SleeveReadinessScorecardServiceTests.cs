@@ -87,11 +87,11 @@ public class SleeveReadinessScorecardServiceTests
         var card = Income(await service.GenerateAsync(AsOf));
 
         Assert.Equal(SleeveReadinessState.Ready, card.Readiness);
-        Assert.True(card.Thresholds.HitRatePass);
-        Assert.True(card.Thresholds.ProfitFactorPass);
-        Assert.True(card.Thresholds.DrawdownPass);
-        Assert.True(card.Thresholds.ProfitableOrBeatSpyPass);
-        Assert.True(card.Thresholds.WeeksObservedMet);
+        Assert.True(card.Evaluation.HitRatePass);
+        Assert.True(card.Evaluation.ProfitFactorPass);
+        Assert.True(card.Evaluation.DrawdownPass);
+        Assert.True(card.Evaluation.ProfitableOrBeatSpyPass);
+        Assert.True(card.Evaluation.WeeksObservedMet);
         Assert.True(card.MeetsMinimumCapital); // 105k >= 100k default
     }
 
@@ -108,7 +108,7 @@ public class SleeveReadinessScorecardServiceTests
         var card = Income(await service.GenerateAsync(AsOf));
 
         Assert.Equal(SleeveReadinessState.NotReady, card.Readiness);
-        Assert.False(card.Thresholds.HitRatePass);
+        Assert.False(card.Evaluation.HitRatePass);
         Assert.Contains("hit rate", card.Rationale, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("40", card.Rationale); // actual
         Assert.Contains("45", card.Rationale); // threshold
@@ -129,6 +129,10 @@ public class SleeveReadinessScorecardServiceTests
 
         Assert.Equal(SleeveReadinessState.InsufficientData, card.Readiness);
         Assert.NotEqual(SleeveReadinessState.NotReady, card.Readiness);
+
+        // Self-contained rationale: the weeks-short arm must also state the closed-trade count.
+        Assert.Contains("10 closed trade(s)", card.Rationale);
+        Assert.Contains("12-week minimum", card.Rationale);
     }
 
     // --- Test 4: metrics-Ready but under minimum capital => capital-gated, no writes ---
@@ -177,9 +181,9 @@ public class SleeveReadinessScorecardServiceTests
 
         var card = Income(await service.GenerateAsync(AsOf));
 
-        Assert.True(card.Thresholds.ProfitableOrBeatSpyPass);
-        Assert.False(card.Thresholds.IsNetProfitable);
-        Assert.True(card.Thresholds.BeatsSpy);
+        Assert.True(card.Evaluation.ProfitableOrBeatSpyPass);
+        Assert.False(card.Evaluation.IsNetProfitable);
+        Assert.True(card.Evaluation.BeatsSpy);
         Assert.Equal(SleeveReadinessState.Ready, card.Readiness);
         Assert.Contains("SPY", card.Rationale);
     }
@@ -254,6 +258,36 @@ public class SleeveReadinessScorecardServiceTests
         var card = Income(await service.GenerateAsync(AsOf));
 
         Assert.Equal(SleeveReadinessState.InsufficientData, card.Readiness);
+
+        // Self-contained rationale: the zero-trades arm must state the MinWeeksObserved target.
+        Assert.Contains("no closed trades", card.Rationale);
+        Assert.Contains("12 minimum week(s)", card.Rationale);
+    }
+
+    // --- no-loss window: profit factor is structurally undefined, not a bare sentinel ---
+
+    [Fact]
+    public async Task NoLossSleeve_FlagsProfitFactorUndefined_AndStillPassesGate()
+    {
+        // 10 winners, zero losers: gross loss is zero so the PF ratio has no value. The
+        // scorecard must expose a renderer-visible structural signal (IsProfitFactorUndefined)
+        // so S4-003 can show "∞ / no losses" instead of the raw sentinel, while gate-pass
+        // behavior stays identical (a flawless sleeve must not fail the PF gate).
+        var snapshots = WeeklySnapshots(13, incomeStart: 100_000m, incomeEnd: 105_000m);
+        var trades = ClosedTrades(SleeveType.Income, winners: 10, losers: 0);
+        // The service is consumed through its Core interface seam (S4-003 dependency).
+        ISleeveReadinessScorecardService service = BuildService(snapshots, trades);
+
+        var card = Income(await service.GenerateAsync(AsOf));
+
+        Assert.True(card.IsProfitFactorUndefined);
+        Assert.True(card.Evaluation.ProfitFactorPass);
+        Assert.Equal(SleeveReadinessState.Ready, card.Readiness);
+
+        // Contrast: a sleeve with at least one loser has a defined profit factor.
+        var withLosses = Income(await BuildService(
+            snapshots, ClosedTrades(SleeveType.Income, winners: 7, losers: 3)).GenerateAsync(AsOf));
+        Assert.False(withLosses.IsProfitFactorUndefined);
     }
 
     // --- thresholds come from the config seam, falling back to Defaults() ---
@@ -276,7 +310,7 @@ public class SleeveReadinessScorecardServiceTests
         var card = Income(await service.GenerateAsync(AsOf));
 
         Assert.Equal(SleeveReadinessState.NotReady, card.Readiness);
-        Assert.False(card.Thresholds.HitRatePass);
+        Assert.False(card.Evaluation.HitRatePass);
         Assert.Equal(0, configRepo.WriteCount); // read-only even when configured
     }
 
