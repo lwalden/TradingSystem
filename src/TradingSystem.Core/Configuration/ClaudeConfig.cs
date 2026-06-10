@@ -31,9 +31,17 @@ public class ClaudeConfig
     // Base address of the local Claude Gateway (loopback-only, plaintext HTTP — see ADR-029).
     public string GatewayBaseUrl { get; set; } = "http://localhost:3131/";
 
+    // Upper bound (seconds) on GatewayTimeoutSeconds (B-008). 120s is ~3.5x the 35s cold-start
+    // default — generous headroom for a pathologically slow gateway cold start while ensuring a
+    // config typo (e.g. 3500 instead of 35) can never park the gateway leg for multiple minutes
+    // before the fallback seam fires. Values above this are clamped at registration with a warning
+    // (clamp, not throw: a typo degrades loudly instead of crashing the Functions host).
+    public const int MaxGatewayTimeoutSeconds = 120;
+
     // Per-request timeout (seconds) for the gateway leg. Sized to cover Claude CLI cold-start for
     // the ~1/day regime call (tiny prompt, MaxTokens=500); the gateway INTEGRATION guide recommends
-    // a client timeout >=35s. A hung/slow gateway still falls back via the AnalyzeAsync seam — to
-    // deterministic rules when DirectApiFallbackEnabled is off, or to the metered direct API when on.
+    // a client timeout >=35s. Capped at MaxGatewayTimeoutSeconds (see above); the lower bound is
+    // unchanged. A hung/slow gateway still falls back via the AnalyzeAsync seam — to deterministic
+    // rules when DirectApiFallbackEnabled is off, or to the metered direct API when on.
     public int GatewayTimeoutSeconds { get; set; } = 35;
 }

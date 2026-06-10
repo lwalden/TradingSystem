@@ -60,6 +60,16 @@ public class DiscordRiskAlertService : IRiskAlertService
         _config = config.Value;
         _logger = logger;
         _delay = delay;
+
+        if (!_config.Enabled)
+        {
+            // ONE-TIME Information-level notice at construction: Program.cs sets the minimum log
+            // level to Information, so without this the disabled state of a capital-preservation
+            // alert path would be invisible in Application Insights (the per-cycle skip below is
+            // intentionally Debug per B-006 to avoid per-cycle noise).
+            _logger.LogInformation(
+                "Discord risk alerts are disabled (Enabled=false); risk alerts will NOT be delivered until enabled.");
+        }
     }
 
     public Task SendDailyStopTriggeredAsync(RiskMetrics metrics, CancellationToken cancellationToken = default)
@@ -97,7 +107,9 @@ public class DiscordRiskAlertService : IRiskAlertService
     {
         if (!_config.Enabled)
         {
-            _logger.LogInformation("Discord risk alerts are disabled; skipping alert: {Title}", title);
+            // Debug, not Information: this branch fires on every risk-check cycle while alerts
+            // are disabled, so an Info-level entry per cycle is pure log noise (B-006).
+            _logger.LogDebug("Discord risk alerts are disabled; skipping alert: {Title}", title);
             return;
         }
 

@@ -180,6 +180,58 @@ public class DiscordRiskAlertServiceTests
     }
 
     [Fact]
+    public async Task DisabledConfig_LogsSkipAtDebug_NotInformation()
+    {
+        // B-006: the Enabled==false skip fires every risk-check cycle, so it must log at Debug —
+        // an Information-level entry per cycle is pure noise in Application Insights. The skip
+        // (no POST) behavior itself is unchanged.
+        var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
+        var (service, h, logger, _) = Build(Config(enabled: false), handler);
+
+        await service.SendDailyStopTriggeredAsync(Metrics());
+
+        Assert.Equal(0, h.InvocationCount);
+        Assert.Equal(1, LogCount(logger, LogLevel.Debug));
+        // Exactly ONE Information entry is allowed: the one-time ctor disabled notice (review
+        // S4-005). The per-call skip path itself must not add Information entries.
+        Assert.Equal(1, LogCount(logger, LogLevel.Information));
+        Assert.Equal(0, LogCount(logger, LogLevel.Warning));
+    }
+
+    [Fact]
+    public async Task DisabledConfig_CtorLogsInformationDisabledNotice_OncePerInstance()
+    {
+        // Review S4-005: Program.cs sets the minimum log level to Information, so the disabled
+        // state of the risk-alert path must surface once at Information when the service is
+        // constructed — otherwise a silent risk-alert outage has no visible signal at all.
+        var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
+        var (service, h, logger, _) = Build(Config(enabled: false), handler);
+
+        // Construction alone emits exactly one Information-level disabled notice.
+        Assert.Equal(1, LogCount(logger, LogLevel.Information));
+        Assert.Contains(AllLogArgStrings(logger), s =>
+            s.Contains("disabled", StringComparison.OrdinalIgnoreCase) &&
+            s.Contains("NOT be delivered", StringComparison.Ordinal));
+
+        // Subsequent per-cycle sends skip at Debug (B-006) and never repeat the Information notice.
+        await service.SendDailyStopTriggeredAsync(Metrics());
+        await service.SendWeeklyStopTriggeredAsync(Metrics());
+
+        Assert.Equal(0, h.InvocationCount);
+        Assert.Equal(1, LogCount(logger, LogLevel.Information));
+        Assert.Equal(2, LogCount(logger, LogLevel.Debug));
+    }
+
+    [Fact]
+    public void EnabledConfig_CtorEmitsNoDisabledNotice()
+    {
+        var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
+        var (_, _, logger, _) = Build(Config(enabled: true), handler);
+
+        Assert.Equal(0, LogCount(logger, LogLevel.Information));
+    }
+
+    [Fact]
     public async Task EmptyWebhookUrl_DoesNotPost_LogsWarning_NoUrlInLog()
     {
         var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
