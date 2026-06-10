@@ -97,7 +97,9 @@ public class DiscordRiskAlertService : IRiskAlertService
     {
         if (!_config.Enabled)
         {
-            _logger.LogInformation("Discord risk alerts are disabled; skipping alert: {Title}", title);
+            // Debug, not Information: this branch fires on every risk-check cycle while alerts
+            // are disabled, so an Info-level entry per cycle is pure log noise (B-006).
+            _logger.LogDebug("Discord risk alerts are disabled; skipping alert: {Title}", title);
             return;
         }
 

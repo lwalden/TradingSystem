@@ -180,6 +180,23 @@ public class DiscordRiskAlertServiceTests
     }
 
     [Fact]
+    public async Task DisabledConfig_LogsSkipAtDebug_NotInformation()
+    {
+        // B-006: the Enabled==false skip fires every risk-check cycle, so it must log at Debug —
+        // an Information-level entry per cycle is pure noise in Application Insights. The skip
+        // (no POST) behavior itself is unchanged.
+        var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
+        var (service, h, logger, _) = Build(Config(enabled: false), handler);
+
+        await service.SendDailyStopTriggeredAsync(Metrics());
+
+        Assert.Equal(0, h.InvocationCount);
+        Assert.Equal(1, LogCount(logger, LogLevel.Debug));
+        Assert.Equal(0, LogCount(logger, LogLevel.Information));
+        Assert.Equal(0, LogCount(logger, LogLevel.Warning));
+    }
+
+    [Fact]
     public async Task EmptyWebhookUrl_DoesNotPost_LogsWarning_NoUrlInLog()
     {
         var handler = StubHandler.ReturnsStatuses(Status(HttpStatusCode.NoContent));
