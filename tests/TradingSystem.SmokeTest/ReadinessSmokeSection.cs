@@ -86,7 +86,11 @@ internal static class ReadinessSmokeSection
                 snapshotRepo,
                 tradeRepo,
                 loggerFactory.CreateLogger<DiscordDailyReportService>(),
-                scorecardService);
+                scorecardService,
+                // S5-002 cadence trap defusal: AsOf is the rolling run day, so pin the weekly
+                // scorecard cadence to its weekday — the readiness-embed check below must keep
+                // exercising the embed path no matter which day the manual harness runs.
+                Options.Create(new ReportingConfig { WeeklyScorecardDay = AsOf.DayOfWeek }));
 
             await reportService.SendDailyReportAsync(AsOf);
             if (handler.InvocationCount != 1)

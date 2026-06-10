@@ -13,6 +13,8 @@ namespace TradingSystem.Functions;
 /// - Broker connect failure: NO snapshot written, no throw — returns a structured failure
 ///   result and sends a best-effort operational connect-failure alert (S5-003, once per run).
 /// - Enrichment failure: warning only; the RiskManager-persisted base snapshot is kept.
+/// - Daily report (S5-002, Default D8): sent AFTER snapshot persistence, only when a snapshot
+///   was persisted; report failure degrades to a warning and never fails the run.
 /// - Unexpected exceptions propagate (the timer wrapper logs + rethrows for App Insights).
 /// </summary>
 public class EndOfDayService : IEndOfDayService
@@ -24,6 +26,7 @@ public class EndOfDayService : IEndOfDayService
     private readonly ITradeRepository? _tradeRepository;
     private readonly IMarketDataService? _marketDataService;
     private readonly IOperationalAlertService? _operationalAlertService;
+    private readonly IDailyReportService? _dailyReportService;
 
     // S5-003 alert-spam guard (Default D6): once per run per failure category, keyed
     // runId:category. Each timer fires once/day with a fresh runId, so this stays tiny over a
@@ -38,7 +41,8 @@ public class EndOfDayService : IEndOfDayService
         ISnapshotRepository? snapshotRepository = null,
         ITradeRepository? tradeRepository = null,
         IMarketDataService? marketDataService = null,
-        IOperationalAlertService? operationalAlertService = null)
+        IOperationalAlertService? operationalAlertService = null,
+        IDailyReportService? dailyReportService = null)
     {
         _broker = broker;
         _riskManager = riskManager;
@@ -47,6 +51,7 @@ public class EndOfDayService : IEndOfDayService
         _tradeRepository = tradeRepository;
         _marketDataService = marketDataService;
         _operationalAlertService = operationalAlertService;
+        _dailyReportService = dailyReportService;
     }
 
     public async Task<EndOfDayResult> RunAsync(string runId, CancellationToken cancellationToken = default)
@@ -88,6 +93,11 @@ public class EndOfDayService : IEndOfDayService
                 metrics.DailyStopTriggered || metrics.WeeklyStopTriggered || metrics.DrawdownHaltTriggered;
 
             await EnrichSnapshotAsync(runId, result, cancellationToken);
+
+            // S5-002 (Default D8): daily report AFTER snapshot persistence/enrichment, never
+            // on a degraded (no-snapshot) run. Own try/catch inside — report failure can never
+            // fail the EOD run or block the snapshot.
+            await TrySendDailyReportAsync(runId, result, cancellationToken);
 
             _logger.LogInformation(
                 "End-of-day pipeline finished. RunId: {RunId}, SnapshotPersisted: {SnapshotPersisted}, SnapshotEnriched: {SnapshotEnriched}, StopTriggered: {StopTriggered}, Warnings: {WarningCount}",
@@ -147,6 +157,48 @@ public class EndOfDayService : IEndOfDayService
                 ex.GetType().Name,
                 runId,
                 category);
+        }
+    }
+
+    /// <summary>
+    /// S5-002 best-effort daily report (Default D8): snapshot = trading-critical, report =
+    /// observability — that asymmetry is the contract here. Skipped entirely on degraded runs
+    /// (no snapshot persisted: a digest would render stale/empty data). Any failure — even an
+    /// implementation bug in a future report service — degrades to a warning on the result and
+    /// never fails the run. Exception TYPE NAMES only reach logs (messages can echo the
+    /// token-bearing webhook URI).
+    /// </summary>
+    private async Task TrySendDailyReportAsync(string runId, EndOfDayResult result, CancellationToken cancellationToken)
+    {
+        if (_dailyReportService == null)
+        {
+            _logger.LogDebug(
+                "IDailyReportService not registered; end-of-day report skipped. RunId: {RunId}",
+                runId);
+            return;
+        }
+
+        if (!result.SnapshotPersisted)
+        {
+            _logger.LogDebug(
+                "No snapshot persisted this run; end-of-day report skipped. RunId: {RunId}",
+                runId);
+            return;
+        }
+
+        try
+        {
+            await _dailyReportService.SendDailyReportAsync(DateTime.UtcNow.Date, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Belt-and-braces: the service already degrades-without-throw on delivery failure,
+            // but observability must never become control even if that contract regresses.
+            _logger.LogWarning(
+                "Daily report send failed ({ErrorType}); end-of-day run continues unaffected. RunId: {RunId}",
+                ex.GetType().Name,
+                runId);
+            result.Warnings.Add($"Daily report failed: {ex.GetType().Name}");
         }
     }
 

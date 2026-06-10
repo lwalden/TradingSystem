@@ -119,7 +119,9 @@ public class DiscordDailyReportServiceTests
         public Fixture(DiscordConfig config, StubHandler handler,
             DailySnapshot? snapshot, List<Trade>? trades,
             IReadOnlyList<SleeveReadinessScorecard>? scorecards = null,
-            ISleeveReadinessScorecardService? scorecardServiceOverride = null)
+            ISleeveReadinessScorecardService? scorecardServiceOverride = null,
+            ReportingConfig? reporting = null,
+            bool omitReportingConfig = false)
         {
             Handler = handler;
             Snapshots.Setup(s => s.GetSnapshotAsync(It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
@@ -143,6 +145,15 @@ public class DiscordDailyReportServiceTests
                 return Task.CompletedTask;
             };
 
+            // S5-002 cadence trap defusal: ReportDate (2026-06-08) is a MONDAY, so with the
+            // production default (Friday) every pre-existing readiness assertion would silently
+            // stop exercising the embed path. Unless a test opts out (omitReportingConfig) or
+            // passes its own cadence, pin the scorecard day to ReportDate's weekday.
+            var reportingOptions = omitReportingConfig
+                ? null
+                : Microsoft.Extensions.Options.Options.Create(
+                    reporting ?? new ReportingConfig { WeeklyScorecardDay = ReportDate.DayOfWeek });
+
             Service = new DiscordDailyReportService(
                 new FakeHttpClientFactory(handler),
                 Microsoft.Extensions.Options.Options.Create(config),
@@ -150,7 +161,8 @@ public class DiscordDailyReportServiceTests
                 Trades.Object,
                 Logger.Object,
                 delay,
-                scorecardService);
+                scorecardService,
+                reportingOptions);
         }
     }
 
@@ -574,5 +586,101 @@ public class DiscordDailyReportServiceTests
         var body = Assert.Single(fx.Handler.Bodies);
         Assert.DoesNotContain("Readiness", body);
         Assert.Equal(0, LogCount(fx.Logger, LogLevel.Error));
+    }
+
+    // ---- S5-002: weekly readiness cadence (Default D7, locked decision 5) ----
+
+    private static List<SleeveReadinessScorecard> ReadyIncomeScorecard() => new()
+    {
+        new()
+        {
+            SleeveName = "Income",
+            Sleeve = SleeveType.Income,
+            Readiness = SleeveReadinessState.Ready,
+            Confidence = 0.75m,
+            ClosedTradeCount = 12,
+            MeetsMinimumCapital = true,
+            Evaluation = new ThresholdResult
+            {
+                ActualMetrics = new SleeveMetrics { ProfitFactor = 2.5m }
+            }
+        }
+    };
+
+    [Fact]
+    public async Task WeeklyCadence_OnScorecardDay_AppendsReadinessEmbed()
+    {
+        // ReportDate is a Monday; the cadence explicitly selects Monday → readiness appended.
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT") }, ReadyIncomeScorecard(),
+            reporting: new ReportingConfig { WeeklyScorecardDay = ReportDate.DayOfWeek });
+
+        await fx.Service.SendDailyReportAsync(ReportDate);
+
+        var body = Assert.Single(fx.Handler.Bodies);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        Assert.Equal(2, doc.RootElement.GetProperty("embeds").GetArrayLength());
+        Assert.Contains("Readiness", body);
+        Assert.Contains("Income: Ready", body);
+    }
+
+    [Fact]
+    public async Task WeeklyCadence_OffDay_OmitsReadinessEmbed_CoreReportUnchanged()
+    {
+        // Cadence = Friday, ReportDate = Monday: the scorecard service must not even be
+        // consulted, and the core digest must be untouched (all S4-003 fields present).
+        var scorecardService = new Mock<ISleeveReadinessScorecardService>(MockBehavior.Strict);
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT"), Fill("JNJ") },
+            scorecardServiceOverride: scorecardService.Object,
+            reporting: new ReportingConfig { WeeklyScorecardDay = DayOfWeek.Friday });
+
+        await fx.Service.SendDailyReportAsync(ReportDate);
+
+        var body = Assert.Single(fx.Handler.Bodies);
+        using var doc = System.Text.Json.JsonDocument.Parse(body);
+        // Single embed: the core daily digest only.
+        Assert.Equal(1, doc.RootElement.GetProperty("embeds").GetArrayLength());
+        Assert.DoesNotContain("Readiness", body);
+        scorecardService.VerifyNoOtherCalls();
+
+        // Core report fields all present on the off day (trades, P&L, positions, regime,
+        // ADR-023 cost breakout).
+        var fieldNames = doc.RootElement.GetProperty("embeds")[0].GetProperty("fields")
+            .EnumerateArray()
+            .Select(f => f.GetProperty("name").GetString())
+            .ToList();
+        Assert.Contains("Daily P&L", fieldNames);
+        Assert.Contains("Market Regime", fieldNames);
+        Assert.Contains("Trades Executed", fieldNames);
+        Assert.Contains("Open Positions", fieldNames);
+        Assert.Contains("Platform Costs", fieldNames);
+        Assert.Contains("Brokerage Costs", fieldNames);
+        Assert.Contains("800.25", body);
+        Assert.Contains("Cautious", body);
+        Assert.Equal(0, LogCount(fx.Logger, LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task WeeklyCadence_UnconfiguredReportingSection_DefaultsToFriday()
+    {
+        // Locked decision 5: no Reporting section bound → Friday is the scorecard day.
+        Assert.Equal(DayOfWeek.Friday, new ReportingConfig().WeeklyScorecardDay);
+
+        var friday = new DateTime(2026, 6, 12);
+        Assert.Equal(DayOfWeek.Friday, friday.DayOfWeek);
+
+        var fx = new Fixture(Config(), StubHandler.ReturnsStatuses(HttpStatusCode.NoContent),
+            Snapshot(), new List<Trade> { Fill("MSFT") }, ReadyIncomeScorecard(),
+            omitReportingConfig: true);
+
+        // Monday (ReportDate): no readiness embed under the default cadence.
+        await fx.Service.SendDailyReportAsync(ReportDate);
+        // Friday: readiness embed appended under the default cadence.
+        await fx.Service.SendDailyReportAsync(friday);
+
+        Assert.Equal(2, fx.Handler.Bodies.Count);
+        Assert.DoesNotContain("Readiness", fx.Handler.Bodies[0]);
+        Assert.Contains("Readiness", fx.Handler.Bodies[1]);
     }
 }

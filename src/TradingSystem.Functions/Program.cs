@@ -48,6 +48,10 @@ var host = new HostBuilder()
             context.Configuration.GetSection("Polygon"));
         services.Configure<DiscordConfig>(
             context.Configuration.GetSection("Discord"));
+        // S5-002: reporting cadence (weekly readiness-scorecard day, default Friday — locked
+        // decision 5). Operational/observability config only — never risk parameters.
+        services.Configure<ReportingConfig>(
+            context.Configuration.GetSection("Reporting"));
         
         // Application Insights
         services.AddApplicationInsightsTelemetryWorkerService();
@@ -74,6 +78,9 @@ var host = new HostBuilder()
         services.AddSingleton<IRiskManager, RiskManager>();
         // S5-001: end-of-day pipeline — delegates the sync/stop-check/base-snapshot spine to
         // RiskManager (alert-only, locked decision 4) and enriches today's snapshot best-effort.
+        // S5-002: the registered IDailyReportService above flows into EndOfDayService's optional
+        // ctor parameter — the daily report goes out after snapshot persistence, in its own
+        // try/catch (report failure never fails the EOD run; degraded runs send no report).
         services.AddSingleton<IEndOfDayService, TradingSystem.Functions.EndOfDayService>();
         services.AddSingleton<IExecutionService, SimpleExecutionService>();
         services.AddSingleton<OptionsExecutionService>();

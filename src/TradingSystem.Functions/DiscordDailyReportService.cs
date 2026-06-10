@@ -22,7 +22,8 @@ namespace TradingSystem.Functions;
 /// (Azure+Polygon+Claude — tracked against the $100/mo ceiling outside snapshots) and
 /// brokerage (snapshot commissions + activity-based forecast) fields — never conflated.
 /// When the optional S4-002 <see cref="ISleeveReadinessScorecardService"/> is wired, a
-/// readiness embed is appended (best-effort: its failure never drops the core report);
+/// readiness embed is appended on the weekly cadence day only (<see cref="ReportingConfig"/>,
+/// default Friday — S5-002, best-effort: its failure never drops the core report);
 /// an undefined profit factor renders as "∞ (no losses)", never the 999 sentinel.
 /// Delivery failure degrades to scrubbed logs and returns — a missed report is never an
 /// operational stop (contrast: dropped risk alerts log the louder AlertDropped signal).
@@ -47,6 +48,7 @@ public class DiscordDailyReportService : IDailyReportService
     private readonly ILogger<DiscordDailyReportService> _logger;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly ISleeveReadinessScorecardService? _scorecardService;
+    private readonly ReportingConfig _reporting;
 
     public DiscordDailyReportService(
         IHttpClientFactory httpClientFactory,
@@ -54,9 +56,10 @@ public class DiscordDailyReportService : IDailyReportService
         ISnapshotRepository snapshotRepository,
         ITradeRepository tradeRepository,
         ILogger<DiscordDailyReportService> logger,
-        ISleeveReadinessScorecardService? scorecardService = null)
+        ISleeveReadinessScorecardService? scorecardService = null,
+        IOptions<ReportingConfig>? reportingConfig = null)
         : this(httpClientFactory, config, snapshotRepository, tradeRepository, logger,
-               Task.Delay, scorecardService)
+               Task.Delay, scorecardService, reportingConfig)
     {
     }
 
@@ -69,7 +72,8 @@ public class DiscordDailyReportService : IDailyReportService
         ITradeRepository tradeRepository,
         ILogger<DiscordDailyReportService> logger,
         Func<TimeSpan, CancellationToken, Task> delay,
-        ISleeveReadinessScorecardService? scorecardService = null)
+        ISleeveReadinessScorecardService? scorecardService = null,
+        IOptions<ReportingConfig>? reportingConfig = null)
     {
         _httpClient = httpClientFactory.CreateClient("DiscordDailyReport");
         _config = config.Value;
@@ -78,6 +82,9 @@ public class DiscordDailyReportService : IDailyReportService
         _logger = logger;
         _delay = delay;
         _scorecardService = scorecardService;
+        // S5-002 (Default D7): optional so existing construction sites compile; unconfigured
+        // deployments get the locked default (Friday scorecard day).
+        _reporting = reportingConfig?.Value ?? new ReportingConfig();
 
         if (!_config.Enabled)
         {
@@ -132,10 +139,16 @@ public class DiscordDailyReportService : IDailyReportService
             BuildSummaryEmbed(day, snapshot, trades)
         };
 
-        var readiness = await TryBuildReadinessEmbedAsync(day, cancellationToken);
-        if (readiness != null)
+        // S5-002 weekly cadence (Default D7, locked decision 5): the readiness scorecard is a
+        // weekly section — appended only on the configured day (default Friday). On every
+        // other day the scorecard service is not even consulted; the core digest is unchanged.
+        if (day.DayOfWeek == _reporting.WeeklyScorecardDay)
         {
-            embeds.Add(readiness);
+            var readiness = await TryBuildReadinessEmbedAsync(day, cancellationToken);
+            if (readiness != null)
+            {
+                embeds.Add(readiness);
+            }
         }
 
         var payload = new
