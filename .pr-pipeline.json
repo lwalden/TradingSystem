@@ -11,9 +11,9 @@
     "*.tf",
     "*.tfvars"
   ],
-  "cycleLimit": 5,
+  "cycleLimit": 3,
   "autoMerge": true,
-  "mergeMethod": "squash",
+  "mergeMethod": "merge",
   "skipPatterns": [
     "package-lock.json",
     "yarn.lock",
