@@ -4,9 +4,36 @@
 > Individual issues are tracked as native Claude Code Tasks (persistent across sessions).
 > Archived to git history when a sprint completes.
 
+*No active sprint.*
+
 ---
 
 ## Sprint Archive
+
+### S5: Start the Paper-Validation Run — EOD orchestration, ops wiring, runbook
+
+<!-- sizing: 7-8 -->
+**Completed:** 2026-06-10 | **Status:** complete | **Final main HEAD:** b410f8f
+**Goal:** Close the end-of-day orchestration gap and the operational wiring (config, alerting, runbook) so the 12-week SANDBOX paper-validation run can actually start, while clearing the small debt surfaced by S4 — with zero deterministic-trading, risk-parameter, sleeve-allocation, or SANDBOX→LIVE changes and zero metered API spend.
+
+**Outcome:** 9/9 items completed and merged to main (8 planned + 1 rework; PRs #88–#96, all CI-gated, merge-commit). Test suite 551 → 590 passing (0 failed), +39 tests. **One rework, zero blocked, zero scope changes beyond the rework.** S5-004's post-merge validation FAILED — the Functions host did not boot (ApplicationInsights.WorkerService 3.0.0 incompatible with Functions Worker AI 2.50.0 → `TypeLoadException: ITelemetryInitializer`, plus a missing bare-`TacticalConfig` DI registration); both defects shipped invisibly because the 590-test xUnit suite never boots the Functions host. Rework S5-004r (PR #96, fix `02d7c24`) realigned the AI packages, restored host boot (all 4 timers register), and passed post-merge validation (Azurite scheduled-task quoting bug also fixed, FuncHost stable). Process changes adopted: host-boot smoke is a runbook preflight step AND an acceptance criterion for any item touching Program.cs/csproj/DI; executor specs must mandate explicit timeouts on every named HttpClient (3 of 4 S5 HIGH findings were that defect class). Strict TDD per item; executors ran in worktree isolation. Six of nine PRs took a single review-fix cycle each (S5-001 `f0454f9`, S5-002 `20b3a54`, S5-003 `bef0e23`, S5-004 `9f2089e`, S5-006 `15a07e7`, S5-004r `364c9eb` docs-only); S5-005/007/008 merged clean. Sprint goal met: day-0 webhook/gateway wiring done, test alert delivered (HTTP 204), the 12-week paper-validation run starts 2026-06-11 (Run Log in docs/paper-validation-runbook.md is the system of record).
+
+| ID | Title | Type | Risk | PR | Outcome |
+|----|-------|------|------|-----|---------|
+| S5-001 | Implement EOD orchestrator pipeline — position/P&L sync, DailySnapshot persistence, stop-trigger check | feature | ⚠ | #91 | merged, pass |
+| S5-002 | Wire daily Discord report + weekly readiness-scorecard cadence into EOD run | feature | - | #93 | merged, pass |
+| S5-003 | Operational failure alerting — Discord alert on broker-connect / orchestration failure | feature | - | #92 | merged, pass |
+| S5-004 | Paper-validation launch runbook + day-0 config wiring (webhook, gateway preflight) | docs | ⚠ | #94 | merged, post-merge FAIL → reworked (S5-004r) |
+| S5-005 | Pin transitive OpenTelemetry.Api past GHSA-g94r-2vxg-569j | chore | ⚠ | #89 | merged, pass |
+| S5-006 | DECISIONS.md hygiene — mark PDR-004 resolved; re-scope KD-001/KD-002 | docs | - | #95 | merged, n/a |
+| S5-007 | S4-007 deferred cosmetic test polish | test | - | #90 | merged, n/a |
+| S5-008 | .gitignore sprint runtime artifacts + *.sh LF pin | chore | - | #88 | merged, n/a |
+| S5-004r | Rework: func host fails to boot — ApplicationInsights.WorkerService 3.0.0 incompatible with Functions Worker AI 2.50.0 (TypeLoadException: ITelemetryInitializer) | fix | ⚠ | #96 | merged, pass |
+
+**Decisions logged:** ADR-031 (new) — paper-validation run hosted on the locally hosted Functions worker, co-resident with loopback-only TWS (127.0.0.1:7497) and claude-gateway (localhost:3131); missed timer firings are tolerated gap days, not incidents; Azure path intact for a future LIVE posture. PDR-004 marked resolved (S5-006, PDR-002 style). KD-001 closed — Discord webhook provisioned day-0, test alert delivered through the production guard path. KD-002 re-scoped to conditional (gateway-or-rules default posture needs no metered key). Locked human decisions: local run model; `DirectApiFallbackEnabled` stays OFF; validation clock starts at sprint close (run starts 2026-06-11); EOD stop-check alert-only; weekly scorecard Friday EOD.
+**Debt closed:** KD-001 (Discord webhook wired), plus all four S4-surfaced items — `.gitattributes` `*.sh text eol=lf` pin (PR #88), OpenTelemetry.Api advisory pin (S5-005; pin later superseded by the S5-004r package realignment — see csproj comment), S4-007 cosmetic test polish (S5-007), DECISIONS.md PDR-004 hygiene (S5-006).
+**Debt surfaced (deferred, not lost):** KD-005 — ApplicationInsights 2.x→3.x upgrade gate: blocked until Functions Worker AI ships a 3.x-compatible release; re-evaluate the removed OTel pin and clear KD-006 in the same change. KD-006 — discord.com URI-redaction gate: AI 2.x dependency telemetry records full outbound URLs (the Discord webhook URL IS the token), bypassing the Program.cs HttpClient ILogger filter; do NOT set APPLICATIONINSIGHTS_CONNECTION_STRING until a redacting telemetry processor exists or KD-005 supersedes.
+**Next-sprint sizing:** 7–8 items (recommend 7). Rework occurred → same-or-minus-one off 8. The rework's root cause was a test-coverage blind spot (the suite never boots the host), not over-sizing — so hold at 7 rather than cutting deeper. Lean 7 because the 12-week paper run is now live (monitoring/triage is a standing tax on the daily budget per ADR-031) and the two new gates (host-boot acceptance criterion, timeout-mandating specs) add per-item overhead until routine; go to 8 only if ≥2 items are trivial chores/docs.
 
 ### S4: Paper-Trading Readiness — PDR-004 gate, Week-10 digest, AI-path hardening
 
