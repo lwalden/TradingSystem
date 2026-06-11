@@ -118,7 +118,17 @@ else {
 }
 
 if (-not $discordEnabled -or [string]::IsNullOrWhiteSpace($webhookUrl) -or $webhookUrl -eq 'YOUR_DISCORD_WEBHOOK_URL') {
-    Write-Warning 'Alert skipped: Discord disabled or webhook not configured. Snapshot is still MISSING — investigate per runbook section 5.'
+    # Name the exact skip condition so the operator knows what to fix (message-level only; URL value never echoed).
+    $skipReason = if (-not $discordEnabled) {
+        "Discord is disabled in config — set Discord:Enabled to 'true' in local.settings.json"
+    }
+    elseif ([string]::IsNullOrWhiteSpace($webhookUrl)) {
+        'webhook URL is blank — set Discord:WebhookUrl in local.settings.json'
+    }
+    else {
+        'webhook URL is still the placeholder — replace YOUR_DISCORD_WEBHOOK_URL with the real webhook in local.settings.json'
+    }
+    Write-Warning "Alert skipped: $skipReason. Snapshot is still MISSING — investigate per runbook section 5."
     exit 1
 }
 

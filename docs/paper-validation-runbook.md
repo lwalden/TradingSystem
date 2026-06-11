@@ -203,8 +203,14 @@ hooks, or agent pipelines:
 pwsh -NoProfile -File D:\Source\TradingSystem\tools\ops\Register-GapDayMonitorTask.ps1
 ```
 
+Run this as the normal dev-box user — no elevation required; the task is registered to
+run as the current user.
+
 The script is idempotent (re-running replaces the task). Verify with
 `schtasks /query /tn TradingSystem-GapDayMonitor /v /fo LIST`.
+
+At the end of the 12-week run, decommission the task:
+`Unregister-ScheduledTask -TaskName TradingSystem-GapDayMonitor -Confirm:$false`.
 
 **Exit-code legend** (visible in Task Scheduler history — the code tells you what happened
 without opening logs):
