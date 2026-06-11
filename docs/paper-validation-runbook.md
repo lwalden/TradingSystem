@@ -30,7 +30,10 @@ The Azure Functions isolated worker runs **locally on the dev box**, not in Azur
 ## 2. Daily preflight (before the pre-market timer)
 
 Run this check each trading morning **before 5:00 AM PT in winter (PST) / 6:00 AM PT in summer
-(PDT)** — the winter deadline is the earlier one (see section 3):
+(PDT)** — the winter deadline is the earlier one (see section 3) — or run
+`tools/ops/preflight.ps1` (S6-004), which scripts the same checks with bounded timeouts:
+TWS port probe (step 1), gateway health (step 2 — gateway-down is a WARN, not a FAIL),
+worker admin-endpoint 4-function list (steps 3–5), and the snapshots data directory:
 
 1. **TWS paper** is running and logged in to the paper account; API enabled with
    socket port **7497** and trusted IP **127.0.0.1** (Configure → API → Settings).
@@ -174,7 +177,8 @@ KD-005/KD-006 — so its absence is by design, not a gap to fix.)
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| **Nothing at all** — no report, no alert, on a trading day | Worker (or the whole box) was not running — the dead-man case | **Check this first each morning.** Confirm the worker process is up and the startup banner shows all 4 functions (section 2 step 5). Distinguish crash from never-started: startup banner present in the console = the worker ran and then exited (check the exit reason in the console tail / `%LOCALAPPDATA%\TradingSystem\logs`); no banner at all = it was never started. If the box slept through a timer, that run is gone (no catch-up); log the gap day in the Run Log |
+| **Nothing at all** — no report, no alert, on a trading day | Worker (or the whole box) was not running — the dead-man case | **Check this first each morning.** Confirm the worker process is up and the startup banner shows all 4 functions (section 2 step 5). Distinguish crash from never-started: startup banner present in the console = the worker ran and then exited (check the exit reason in the console tail / `%LOCALAPPDATA%\TradingSystem\logs`); no banner at all = it was never started. If the box slept through a timer, that run is gone (no catch-up); log the gap day in the Run Log. The `TradingSystem-GapDayMonitor` task (2:30 PM weekdays — see the gap-day monitor subsection below) automates this check and alerts when the day's snapshot is missing |
+| `Dead-Man Alert — No EOD Snapshot for <date>` (orange; sent by the **gap-day monitor task**, not the worker) | The 2:30 PM `TradingSystem-GapDayMonitor` task found no entry for today in `data/snapshots.json` — the EOD path never ran (worker down, box asleep, or EOD failure: the dead-man case above). **On a market holiday this is an expected false positive** — the monitor is weekday-only with no holiday calendar (~9/year, accepted by design); ignore it | Holiday → ignore. Otherwise triage the dead-man row above (worker up? banner? local logs), then record the gap day in the Run Log |
 | **Worker IS running, timers fired (visible in log), but no Discord message arrived** | Discord unreachable (or webhook broken) at the moment an ops/risk alert was sent — the alert was dropped (dead-man gap on the alert path) | The ONLY signal is the local worker log (console, or the files under `%LOCALAPPDATA%\TradingSystem\logs`): the signature is a `LogError` line from `DiscordRiskAlertService` matching `"… alert NOT delivered and will not be retried — … AlertDropped=True …"` (rendered console form — capital `T`); search the log files for `AlertDropped=True`. Operator action: treat the logged title as the alert you never received — triage its underlying failure first, then fix Discord delivery (webhook URL valid? Discord up?), and log the incident in the Run Log |
 | No daily report by ~15 min after the EOD timer, but no orange alert either | Report send failed silently is *not* possible without a log — check worker log for report-path warnings; also re-check the dead-man cases above | Worker log around 20:30 UTC (12:30 PM PT winter / 1:30 PM PT summer); `data/snapshots.json` tells you whether the EOD run itself happened |
 | `Broker Connect Failure — …` alert | TWS not running, not logged in, API disabled, or port/client-id mismatch | Match TWS API settings against `IBKR:Host/Port/ClientId` in `local.settings.json`; restart TWS; pre-market failure skips the options sleeve, EOD failure skips the snapshot |
@@ -182,6 +186,45 @@ KD-005/KD-006 — so its absence is by design, not a gap to fix.)
 | `Orchestration Run Failure — …` alert | Unhandled exception (type name is in the alert) | Worker console / `%LOCALAPPDATA%\TradingSystem\logs` — search for the runId in the alert |
 | Gateway down (health check fails, or log line `Direct API fallback disabled; gateway miss → deterministic rules`) | claude-gateway process not running or CLI session expired | **Expected degrade, not an incident:** regime classification falls back to deterministic rules with zero metered spend. Restart the gateway; check `GET /health/cli` for credential status. Do NOT enable the metered fallback as a remediation |
 | Snapshot missing for a day (`data/snapshots.json`) | Any of the above on the EOD path | Identify which from logs/alerts; record the gap day in the Run Log |
+
+### Gap-day monitor (dead-man) — one-time manual registration
+
+`tools/ops/Check-DailySnapshot.ps1` (S6-004) closes the dead-man blind spot in the first
+triage row: a down worker can never tell you it is down, so an independent scheduled task
+checks each weekday at **2:30 PM local** (≥45 min after the EOD timer in both DST regimes)
+that today's entry exists in `data/snapshots.json`, and posts an orange
+`Dead-Man Alert — No EOD Snapshot for <date>` embed when it does not. The webhook URL is
+read from the gitignored `local.settings.json` (`Discord:WebhookUrl`) and is never logged.
+
+**Registration is a one-time manual operator step** — it is never performed by CI, tests,
+hooks, or agent pipelines:
+
+```powershell
+pwsh -NoProfile -File D:\Source\TradingSystem\tools\ops\Register-GapDayMonitorTask.ps1
+```
+
+Run this as the normal dev-box user — no elevation required; the task is registered to
+run as the current user.
+
+The script is idempotent (re-running replaces the task). Verify with
+`schtasks /query /tn TradingSystem-GapDayMonitor /v /fo LIST`.
+
+At the end of the 12-week run, decommission the task:
+`Unregister-ScheduledTask -TaskName TradingSystem-GapDayMonitor -Confirm:$false`.
+
+**Exit-code legend** (visible in Task Scheduler history — the code tells you what happened
+without opening logs):
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Snapshot present (or weekend — nothing expected) |
+| 1 | Snapshot MISSING; alert skipped (Discord disabled or webhook not configured) — still investigate |
+| 2 | Snapshot MISSING; alert delivery FAILED (Discord unreachable) — investigate both |
+| 3 | Snapshot MISSING; alert delivered — triage per the table above |
+
+Optional controlled drill (renders a real alert without waiting for a genuine gap day):
+`Check-DailySnapshot.ps1 -Date <past-weekday-with-no-snapshot>` — note it in the Run Log as
+a drill. Use `-WhatIf` to evaluate without posting.
 
 ## 6. Locked posture (ops policy)
 
