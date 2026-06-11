@@ -21,6 +21,7 @@ config.local.*
 
 # IDE and Editor
 .idea/
+.vscode/
 
 *.swp
 *.swo
@@ -137,6 +138,7 @@ nul
 .sprint-tool-count
 .correction-state
 .context-usage
+.sprint-metrics.json
 .quality-gate-pass
 .quality-review-result.json
 .claude/worktrees/
