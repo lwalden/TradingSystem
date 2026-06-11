@@ -170,7 +170,7 @@ public class DiscordIncomeReportService : IIncomeReportService
         }
 
         var description = plan.ProposedBuys.Count == 0
-            ? "No buys proposed — empty or on-target sleeve."
+            ? "No buys proposed — sleeve is unfunded or fully on-target."
             : $"{plan.ProposedBuys.Count.ToString(CultureInfo.InvariantCulture)} proposed buy(s) totaling {Money(plan.TotalProposedAmount)}.";
 
         return new Embed(

@@ -156,11 +156,14 @@ public class IncomeSleeveFunctionTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // The structured result is logged (run-record evidence).
+        // The structured result is logged (run-record evidence). SkipReason is additive
+        // (S6-001 review fix 4): present on every finish line, empty when not skipped, so a
+        // gate-skip day is distinguishable from a broker-failure day in logs.
         Assert.Contains(CapturedLogs(logger),
             e => e.Level == LogLevel.Information &&
                  e.Message.Contains("OrdersPlaced: 0") &&
-                 e.Message.Contains("ProposedBuyCount: 3"));
+                 e.Message.Contains("ProposedBuyCount: 3") &&
+                 e.Message.Contains("SkipReason:"));
     }
 
     [Fact]

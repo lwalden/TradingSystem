@@ -131,6 +131,9 @@ public class IncomeReinvestService : IIncomeReinvestService
                 // Owner-gated paper order path: the EXISTING IncomeSleeveManager execution
                 // pipeline (live quotes → limit orders via IExecutionService). No new
                 // execution logic, no mode logic.
+                // Order submissions are SEQUENTIAL by design: IBKR serializes order
+                // submission per client id, and the income universe is small. Do not
+                // parallelize without revisiting IBKRRequestManager semantics.
                 var executions = await _sleeveManager.ExecuteReinvestmentPlanAsync(plan, cancellationToken);
                 result.OrdersPlaced = executions.Count(e => e.Success);
                 _logger.LogInformation(

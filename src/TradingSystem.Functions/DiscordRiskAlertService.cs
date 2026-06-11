@@ -39,9 +39,11 @@ public class DiscordRiskAlertService : IRiskAlertService, IOperationalAlertServi
 
     // Terminal-drop guidance per alert kind. The risk wording is unchanged (a missed stop alert
     // demands manual verification); the operational wording is softer — an ops alert is not a
-    // capital-preservation stop, the run outcome itself is already in logs/App Insights.
+    // capital-preservation stop, the run outcome itself is already in the worker logs.
+    // Application Insights is OFF by design (KD-006), so triage points at the local logs.
     private const string RiskDroppedNote = "verify the risk stop was acted on manually";
-    private const string OperationalDroppedNote = "check the run outcome in logs/Application Insights";
+    private const string OperationalDroppedNote =
+        @"check the run outcome in the worker console or %LOCALAPPDATA%\TradingSystem\logs";
 
     private readonly HttpClient _httpClient;
     private readonly DiscordConfig _config;

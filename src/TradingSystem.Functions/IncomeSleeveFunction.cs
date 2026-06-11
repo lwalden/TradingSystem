@@ -19,7 +19,7 @@ public class IncomeSleeveFunction
 
     // S5-003 alert-spam guard (Default D7): once per run per failure category, keyed
     // runId:category — same pattern as DailyOrchestrator. The reinvest timer fires once a
-    // day at most, so this stays tiny over a long-lived instance.
+    // month at most, so this stays tiny over a long-lived instance.
     private readonly object _alertGateLock = new();
     private readonly HashSet<string> _alertedRunCategories = new(StringComparer.Ordinal);
 
@@ -90,7 +90,7 @@ public class IncomeSleeveFunction
             }
 
             _logger.LogInformation(
-                "Monthly income reinvest finished. RunId: {RunId}, Skipped: {Skipped}, BrokerConnected: {BrokerConnected}, PlanGenerated: {PlanGenerated}, ProposedBuyCount: {ProposedBuyCount}, TotalProposedAmount: {TotalProposedAmount:C}, OrdersPlaced: {OrdersPlaced}, ReportSent: {ReportSent}",
+                "Monthly income reinvest finished. RunId: {RunId}, Skipped: {Skipped}, BrokerConnected: {BrokerConnected}, PlanGenerated: {PlanGenerated}, ProposedBuyCount: {ProposedBuyCount}, TotalProposedAmount: {TotalProposedAmount:C}, OrdersPlaced: {OrdersPlaced}, ReportSent: {ReportSent}, SkipReason: {SkipReason}",
                 runId,
                 result.Skipped,
                 result.BrokerConnected,
@@ -98,7 +98,8 @@ public class IncomeSleeveFunction
                 result.ProposedBuyCount,
                 result.TotalProposedAmount,
                 result.OrdersPlaced,
-                result.ReportSent);
+                result.ReportSent,
+                result.SkipReason ?? string.Empty);
         }
         catch (Exception ex)
         {
