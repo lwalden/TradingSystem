@@ -20,8 +20,8 @@ The Azure Functions isolated worker runs **locally on the dev box**, not in Azur
   cd D:\Source\TradingSystem\src\TradingSystem.Functions
   func start          # or: dotnet run
   ```
-- **Machine-on requirement:** the dev box and the worker must be up across both timer
-  firings (see section 3). Sleep/hibernate counts as down.
+- **Machine-on requirement:** the dev box and the worker must be up across the day's timer
+  firings (all 4 timers — see section 3). Sleep/hibernate counts as down.
 - **Missed runs do not catch up.** If the worker was not running when a timer was due,
   that run is simply skipped — a gap day shows up as a missing entry in
   `data/snapshots.json` and no Discord report for that date. Gap days are tolerated by
@@ -49,9 +49,12 @@ Run this check each trading morning **before 5:00 AM PT in winter (PST) / 6:00 A
    package-version mismatch (S5-004r) can pass the full unit suite yet crash the worker
    at bootstrap, because tests never load the Functions host. Run this check first: the
    function list in step 5 is meaningless until the worker has provably booted.
-5. **Startup-log smoke check:** the worker banner lists both timer functions —
-   `DailyOrchestrator_PreMarket` and `DailyOrchestrator_EndOfDay`. If either is missing,
+5. **Startup-log smoke check:** the worker banner lists **all 4 functions** —
+   `DailyOrchestrator_PreMarket`, `DailyOrchestrator_EndOfDay`,
+   `IncomeSleeve_MonthlyReinvest`, and `IncomeSleeve_QuarterlyAudit`. If any is missing,
    the build is broken or the wrong project started; do not assume the day will run.
+   `tools/ci/host-boot-smoke.sh` (S6-002) is the scripted equivalent of steps 4–5 — it
+   boots the worker and asserts the same four names.
 
 ## 3. Timer schedule
 
@@ -62,6 +65,8 @@ across DST transitions. Document only — do not "fix" the crons.
 |---|---|---|---|---|
 | `DailyOrchestrator_PreMarket` | `0 0 13 * * 1-5` | 13:00 | 6:00 AM | 5:00 AM |
 | `DailyOrchestrator_EndOfDay` | `0 30 20 * * 1-5` | 20:30 | 1:30 PM | 12:30 PM |
+| `IncomeSleeve_MonthlyReinvest` | `0 30 13 1-7 * 1-5` | 13:30 | 6:30 AM | 5:30 AM |
+| `IncomeSleeve_QuarterlyAudit` | `0 0 14 1-7 1,4,7,10 1-5` | 14:00 | 7:00 AM | 6:00 AM |
 
 **Which column applies:** the planned validation window (2026-06-11 → 2026-09-03) falls
 entirely in **PDT (summer)**; the PST (winter) column takes over only if the run extends past
@@ -69,6 +74,57 @@ US DST end on 2026-11-01.
 
 Weekdays only (`1-5`). The orchestrator's own calendar/no-trade-window logic decides what
 actually happens inside a run; the timer just fires.
+
+**Income timer footnote:** the two income crons restrict day-of-month (`1-7`) AND
+day-of-week (`1-5`), so each can fire on multiple days — potentially every weekday — of the
+first week of its month(s); the audit additionally fires only in Jan/Apr/Jul/Oct (`1,4,7,10`).
+That is expected: the **in-code gate** decides what actually runs — the first trading
+weekday of the month for the reinvest (every other firing logs an Information skip and
+returns), and the not-implemented skip for the audit (see the expected-behavior subsections
+below). Do not "fix" the crons.
+
+### Expected behavior: 2026-07-01 reinvest firing (S6-001 posture)
+
+The first `IncomeSleeve_MonthlyReinvest` run of the validation window lands **Wed 2026-07-01**
+(the first trading weekday of July) at 6:30 AM PDT. The default posture is
+**recommendation-only** (`IncomeSleeve:OrderPlacementEnabled=false` — S6-001 locked
+decision): the run computes the reinvestment plan and reports it; it places nothing.
+
+- A neutral (unbordered) Discord message titled `Income Reinvest Plan — Wed Jul 1, 2026`
+  arrives, with a Posture field reading
+  `Recommendation-only; IncomeSleeve:OrderPlacementEnabled=false. NO orders were placed.`
+- **NO orders appear in TWS paper.** Orders on this timer exist only if the owner explicitly
+  flipped the flag to `true` beforehand.
+- An empty sleeve legitimately yields `No buys proposed.` — that message arriving at all is
+  proof the timer ran, not a failure.
+- Other weekday firings in the Jul 1–7 window log an Information skip in the worker log
+  (`Monthly reinvest skipped — Not the first trading weekday of the month …`) and send
+  nothing — expected (worker console or `%LOCALAPPDATA%\TradingSystem\logs` — section 5).
+- If the gate day is a market holiday, the run degrades like any closed-market day — the
+  recommendation-only output is benign (accepted edge; no holiday calendar on this timer).
+- The income sleeve's **PDR-004 ≥12-week clock starts at its first actual trade**, not at
+  plan generation — recommendation-only months do not advance it.
+
+**Before flipping `IncomeSleeve:OrderPlacementEnabled` to `true`** (an owner action, never an
+ops/triage step), confirm all of:
+
+1. the prior recommendation-only `Income Reinvest Plan — <date>` Discord report arrived and
+   its proposed tickers match known income-sleeve holdings, quantities are non-zero, and
+   estimated cost is within the available-cash estimate shown in the message;
+2. TWS is running in **paper** mode;
+3. the IB **LIVE** account is NOT the active TWS session.
+
+### Expected behavior: Jul 1–7 quarterly-audit window (S6-007)
+
+`IncomeSleeve_QuarterlyAudit` is **not implemented** (deferred per backlog, S7+). On each of
+its firing day(s) in the Jul 1–7 window, the worker console/log shows one Warning line:
+
+```
+IncomeSleeve_QuarterlyAudit is not implemented — skipped (deferred per backlog, S7+). RunId: <id>
+```
+
+**No Discord message is sent — silence here is expected**, not a dropped alert. Do not
+triage it.
 
 ## 4. What each Discord message means
 
@@ -80,10 +136,13 @@ failure, unbordered/neutral = normal digest.**
 |---|---|---|
 | `Daily Report — <date>` (e.g. `Daily Report — Wed Jun 11, 2026`) | EOD digest: trades, realized/unrealized P&L, positions, market regime, ADR-023 cost breakout | None — read it. Its *absence* on a trading day is a triage trigger (section 5) |
 | `Sleeve Readiness (paper-validation gate)` (embed appended to the Friday daily report) | PDR-004 gate progress per sleeve (hit rate, profit factor, drawdown, weeks observed) | None — track gate progress week over week |
+| `Income Reinvest Plan — <date>` (e.g. `Income Reinvest Plan — Wed Jul 1, 2026`) | Monthly income reinvest digest (neutral): posture line, available-cash estimate, sleeve value, category drift, proposed buys (or `No buys proposed.`) | Verify **NO orders** landed in TWS paper unless `IncomeSleeve:OrderPlacementEnabled=true` was explicitly set (section 3 expected-behavior); note the firing in the Run Log |
 | `Broker Connect Failure — Pre-Market` | Worker could not connect to TWS; options sleeve skipped for the day | Check TWS is running/logged in, port 7497, trusted IP; fix before the EOD timer |
 | `Broker Connect Failure — End of Day` | Worker could not connect to TWS at EOD; **no snapshot written** for the day | Fix TWS; the day is a snapshot gap (tolerated, but log it in the Run Log) |
-| `Orchestration Run Failure — Pre-Market` | Unhandled exception in the pre-market run (exception type in the message) | Check worker console / App Insights for the failure; rerun is not automatic |
+| `Broker Connect Failure — Monthly Reinvest` | Worker could not connect to TWS on the reinvest gate day; no plan generated, no report sent | Fix TWS as above. No catch-up run: the next reinvest evaluation is next month's gate day — drift-based plans self-correct |
+| `Orchestration Run Failure — Pre-Market` | Unhandled exception in the pre-market run (exception type in the message) | Check the worker console / local log files (section 5) for the failure; rerun is not automatic |
 | `Orchestration Run Failure — End of Day` | Unhandled exception in the EOD run; snapshot may not have been written | Same as above; verify whether `data/snapshots.json` has today's entry |
+| `Orchestration Run Failure — Monthly Reinvest` | Unhandled exception in the reinvest run (exception type in the message); plan/report may not have been produced | Check the worker console / local log files (section 5) for the runId in the alert |
 | `Daily Risk Stop Triggered` | Daily P&L breached the daily stop threshold (alert-only in paper — nothing is halted) | Note it; verify the EOD snapshot carries the flag. No parameter changes |
 | `Weekly Risk Stop Triggered` | Weekly P&L breached the weekly stop threshold (alert-only in paper) | Same as daily stop |
 | `Drawdown Halt Triggered` | Drawdown breached the halt threshold (alert-only in paper) | Same as daily stop |
@@ -99,19 +158,28 @@ failure, unbordered/neutral = normal digest.**
   in section 5.
 - **Dead-man gap (worker not running)** — no worker means no runs, no alerts, and no
   "I'm down" message. Nothing can tell you from Discord. Section 5, first entry.
+- **`IncomeSleeve_QuarterlyAudit` not implemented (S7+)** — fires on weekdays in the
+  Jul 1–7 window; one Warning log line, no Discord message; see section 3 for the exact
+  log line.
 
 ## 5. Failure triage
 
 Check entries top-down; the first one is the one Discord can never tell you about.
 
+**Where the logs are:** every triage row below points at the **local sinks** — the worker
+console, and the log files under `%LOCALAPPDATA%\TradingSystem\logs` when the worker runs as
+the `TradingSystem-FuncHost` scheduled task (that task's output location). (App Insights is
+intentionally disabled for this run — `APPLICATIONINSIGHTS_CONNECTION_STRING` is unset,
+KD-005/KD-006 — so its absence is by design, not a gap to fix.)
+
 | Symptom | Likely cause | Action |
 |---|---|---|
-| **Nothing at all** — no report, no alert, on a trading day | Worker (or the whole box) was not running — the dead-man case | **Check this first each morning.** Confirm the worker process is up and the startup banner shows both timers. Distinguish crash from never-started: startup banner present in the console = the worker ran and then exited (check the exit reason in the console tail / App Insights); no banner at all = it was never started. If the box slept through a timer, that run is gone (no catch-up); log the gap day in the Run Log |
-| **Worker IS running, timers fired (visible in log), but no Discord message arrived** | Discord unreachable (or webhook broken) at the moment an ops/risk alert was sent — the alert was dropped (dead-man gap on the alert path) | The ONLY signal is the local worker log / App Insights: the signature is a `LogError` line from `DiscordRiskAlertService` matching `"… alert NOT delivered and will not be retried — … AlertDropped=True …"` (rendered console form — capital `T`); structured query: `traces \| where customDimensions.AlertDropped == "true"`. Operator action: treat the logged title as the alert you never received — triage its underlying failure first, then fix Discord delivery (webhook URL valid? Discord up?), and log the incident in the Run Log |
+| **Nothing at all** — no report, no alert, on a trading day | Worker (or the whole box) was not running — the dead-man case | **Check this first each morning.** Confirm the worker process is up and the startup banner shows all 4 functions (section 2 step 5). Distinguish crash from never-started: startup banner present in the console = the worker ran and then exited (check the exit reason in the console tail / `%LOCALAPPDATA%\TradingSystem\logs`); no banner at all = it was never started. If the box slept through a timer, that run is gone (no catch-up); log the gap day in the Run Log |
+| **Worker IS running, timers fired (visible in log), but no Discord message arrived** | Discord unreachable (or webhook broken) at the moment an ops/risk alert was sent — the alert was dropped (dead-man gap on the alert path) | The ONLY signal is the local worker log (console, or the files under `%LOCALAPPDATA%\TradingSystem\logs`): the signature is a `LogError` line from `DiscordRiskAlertService` matching `"… alert NOT delivered and will not be retried — … AlertDropped=True …"` (rendered console form — capital `T`); search the log files for `AlertDropped=True`. Operator action: treat the logged title as the alert you never received — triage its underlying failure first, then fix Discord delivery (webhook URL valid? Discord up?), and log the incident in the Run Log |
 | No daily report by ~15 min after the EOD timer, but no orange alert either | Report send failed silently is *not* possible without a log — check worker log for report-path warnings; also re-check the dead-man cases above | Worker log around 20:30 UTC (12:30 PM PT winter / 1:30 PM PT summer); `data/snapshots.json` tells you whether the EOD run itself happened |
 | `Broker Connect Failure — …` alert | TWS not running, not logged in, API disabled, or port/client-id mismatch | Match TWS API settings against `IBKR:Host/Port/ClientId` in `local.settings.json`; restart TWS; pre-market failure skips the options sleeve, EOD failure skips the snapshot |
 | `Broker Connect Failure — Pre-Market` on a **Monday morning** | TWS weekly auto-restart (Sunday) left it at the restart prompt or logged out — the restart can also reset API settings | Accept the restart prompt, re-login to the **paper** account, then re-verify API settings: socket port **7497** and trusted IP **127.0.0.1**. If the pre-market timer already passed while TWS was down, that run is gone — log a gap day in the Run Log |
-| `Orchestration Run Failure — …` alert | Unhandled exception (type name is in the alert) | Worker console / App Insights failure traces for the runId in the alert |
+| `Orchestration Run Failure — …` alert | Unhandled exception (type name is in the alert) | Worker console / `%LOCALAPPDATA%\TradingSystem\logs` — search for the runId in the alert |
 | Gateway down (health check fails, or log line `Direct API fallback disabled; gateway miss → deterministic rules`) | claude-gateway process not running or CLI session expired | **Expected degrade, not an incident:** regime classification falls back to deterministic rules with zero metered spend. Restart the gateway; check `GET /health/cli` for credential status. Do NOT enable the metered fallback as a remediation |
 | Snapshot missing for a day (`data/snapshots.json`) | Any of the above on the EOD path | Identify which from logs/alerts; record the gap day in the Run Log |
 

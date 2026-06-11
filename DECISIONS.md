@@ -264,9 +264,13 @@ per ADR-029). An Azure-hosted worker cannot reach either, and exposing either of
 violate the ADR-029 transport stance. The question is where the worker runs for the
 validation window.
 **Decision:** Host the Functions worker **locally on the dev box**, co-resident with TWS and
-claude-gateway (`func start` / `dotnet run` from `src/TradingSystem.Functions`). The two
-NCRONTAB timers (pre-market `0 0 13 * * 1-5`, EOD `0 30 20 * * 1-5`, both UTC) fire only
+claude-gateway (`func start` / `dotnet run` from `src/TradingSystem.Functions`). The four
+NCRONTAB timers (pre-market `0 0 13 * * 1-5`, EOD `0 30 20 * * 1-5`, income monthly reinvest
+`0 30 13 1-7 * 1-5`, income quarterly audit `0 0 14 1-7 1,4,7,10 1-5`, all UTC) fire only
 while the worker is up — the dev box must be on across the timer windows during market days.
+*(Updated S6-003, 2026-06-10: originally written as "the two NCRONTAB timers" — the two
+income-sleeve timers were always registered on the same worker and are now counted; no cron
+changed and no decision content is altered.)*
 Operational procedure (preflight, schedule, triage, posture) lives in
 `docs/paper-validation-runbook.md`; that runbook's Run Log is the system of record for the
 validation start date.
@@ -282,7 +286,11 @@ validation start date.
 **Consequences:** Validation continuity depends on dev-box uptime. Missed timer firings do
 not catch up; a missed EOD run is visible as a same-date gap in `data/snapshots.json` and a
 missing daily report, and is tolerated by the ≥12-week window rather than treated as an
-incident. The Azure deployment path (Key Vault, App Insights cloud hosting) remains intact
+incident. *(Updated S6-003, 2026-06-10)* A missed monthly-reinvest firing is tolerated the
+same way: drift-based plans are self-correcting, so next month's gate day catches the drift.
+The quarterly-audit timer is a documented no-op until implemented (S7+) — its firing
+produces a Warning log line and nothing else (S6-007). The Azure deployment path (Key Vault,
+App Insights cloud hosting) remains intact
 for a future LIVE posture decision — this ADR governs the paper-validation window only.
 
 ---
