@@ -317,17 +317,17 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 
 ---
 
-## Project State Snapshot | 2026-04-07 | Post-Consolidation
+## Project State Snapshot | 2026-06-10 | Paper-Validation Run Live
 
-**Phase:** 1 — Foundation (Week 9 complete, 418 tests passing). OptiTrade consolidated.
+**Phase:** 3 — Paper Validation, running since 2026-06-11 (ADR-030/031). 12-week window; earliest gate evaluation on/after 2026-09-03. 632 tests passing.
 
 ### Unified Phase Structure
 
 | Phase | Weeks | Status | Goal |
 |---|---|---|---|
-| 1. Foundation | 1-10 | Week 9 done, Week 10 pending | IBKR, sleeves, risk, orchestration, Claude regime |
-| 2. Integration + SPX Backtests | 11-16 | Pending | Migrate backtest pipeline (done), SPX backtests, strategy lockdown |
-| 3. Paper Validation | 17-28 | Pending | 12+ weeks autonomous paper trading |
+| 1. Foundation | 1-10 | Done | IBKR, sleeves, risk, orchestration, Claude regime |
+| 2. Integration + SPX Backtests | 11-16 | Closed as superseded (ADR-030: backtesting demoted to research aid; pipeline migrated, gate role removed) | Migrate backtest pipeline (done), SPX backtests, strategy lockdown |
+| 3. Paper Validation | 17-28 | In progress — started 2026-06-11, locally hosted worker per ADR-031 | 12+ weeks autonomous paper trading |
 | 4. Live Transition | 29-32 | Pending | Staged go-live with human approval |
 | 5. Stabilization | 33-44+ | Pending | Tuning, performance reviews |
 
@@ -335,16 +335,15 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 - Weeks 1-8: IBKR connection, market data, storage, orders, income sleeve, option chains, IV rank, screening, Polygon.io calendar, multi-leg orders, options lifecycle, execution service, orchestration wiring, pre-market tests
 - Week 9: Concrete `RiskManager` with per-trade checks, stop-halt, position/cap enforcement, no-trade windows; snapshot-backed drawdown tracking; Discord stop alerts via `IRiskAlertService`; Azure.Identity upgraded to 1.17.1
 - 2026-04-07: OptiTrade consolidated (ADR-026). Backtest pipeline migrated to `tools/backtest/`. Iron condor findings recorded (ADR-028).
+- Completed through S5 (2026-06-10): sprints S1–S5 merged and archived — see the sprint archive in SPRINT.md for the detailed per-sprint record (this snapshot does not duplicate it).
 
-### Blockers (as of 2026-04-07)
-- Discord webhook: server/channel not yet created — needed for stop alerts
-- Claude API key: needed for regime service integration (Week 10)
+### Blockers (as of 2026-06-10)
+None — both 2026-04-07 blockers cleared: Discord webhook resolved (day-0 wiring, test alert delivered — see KD-001); Claude API key resolved by re-scoping (gateway key provisioned, metered key not required while `DirectApiFallbackEnabled=false` — see KD-002).
 
 ### Next Steps
-1. Complete Phase 1 (Week 10): Claude regime service, Discord webhook
-2. SPX iron condor backtest via `tools/backtest/` — the alpha-seeking critical path
-3. SPX credit spread backtests if iron condor passes
-4. Begin Phase 3 paper validation (~June 2026)
+1. Monitor the paper-validation run per `docs/paper-validation-runbook.md` (its Run Log is the system of record)
+2. S6 protect/instrument items (host-boot CI gate, gap-day monitor, reinvest wiring)
+3. Gate evaluation on/after 2026-09-03 — PDR-005 then becomes the live-transition decision
 
 ## Known Debt
 
@@ -356,6 +355,7 @@ Select which sleeve(s) activate first and final initial capital split/account ma
 | KD-004 | ✅ RESOLVED 2026-05-29 (S3-001, PR #70). ~~CachingMarketDataService.cs ~360 lines, exceeds 300-line architecture-fitness threshold (grew across S2-001/003/005/006)~~ — decomposed into a 125-line facade + new 280-line MarketRegimeProvider (internal composition, no DI change, zero behavior change) per ADR-017 | Maintainability — closed | 2026-05-29 |
 | KD-005 | **ApplicationInsights 2.x→3.x upgrade gate (S5-004r).** `Microsoft.ApplicationInsights.WorkerService` is pinned to the classic 2.x line (2.23.0): AI 3.x is OTel-based and removed classic API types (`ITelemetryInitializer`) that `Microsoft.Azure.Functions.Worker.ApplicationInsights` 2.50.0 is compiled against — pairing them crashes the isolated worker at DI bootstrap with `TypeLoadException`. Upgrade is BLOCKED until the Functions Worker AI package ships a 3.x-compatible release; when unblocking, re-evaluate the OpenTelemetry.Api pin removed in S5-004r (see comment in `TradingSystem.Functions.csproj`) and clear KD-006 in the same change | Stuck on classic 2.x telemetry SDK; no OTel-native pipeline. Boot-blocking if upgraded prematurely | 2026-06-10 |
 | KD-006 | **discord.com URI-redaction gate before enabling App Insights (S5-004r).** AI 2.x *dependency* telemetry records the full request URL of outbound HTTP calls — for the Discord named clients that URL IS the token-bearing webhook URL. This path bypasses the `System.Net.Http.HttpClient` ILogger filter in `Program.cs` (that filter only covers log telemetry) and is dormant solely because `APPLICATIONINSIGHTS_CONNECTION_STRING` is unset everywhere. Do NOT set that variable until a telemetry processor/initializer that redacts or drops discord.com dependency URLs is in place (or AI 3.x with OTel redaction supersedes it — KD-005) | Secret-leak risk into App Insights if telemetry is ever enabled without redaction | 2026-06-10 |
+| KD-007 | **Optional-null ctor dependency pattern — undecided (S6-001 judge deferral).** Recurring shape across S5-001/S5-003/S6-001: optional constructor dependencies accepted as null with a logged null-skip, vs required dependencies failing at boot — decide once, portfolio-wide; S6-002's host-boot CI gate partially mitigates accidental de-registration | A de-registered dependency degrades to a logged skip instead of failing loudly; pattern decision pending | 2026-06-10 |
 
 ---
 
