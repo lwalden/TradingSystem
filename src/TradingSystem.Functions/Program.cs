@@ -58,6 +58,12 @@ var host = new HostBuilder()
         // decision 5). Operational/observability config only — never risk parameters.
         services.Configure<ReportingConfig>(
             context.Configuration.GetSection("Reporting"));
+        // S6-001 (Default D5): owner gate for the monthly reinvest timer. OrderPlacementEnabled
+        // defaults FALSE (locked decision 1: recommendation-only — plan + report, NO orders).
+        // Operational gate config, NOT risk config; injected as IOptions<IncomeSleeveConfig>
+        // only — deliberately no bare-type registration of this config.
+        services.Configure<IncomeSleeveConfig>(
+            context.Configuration.GetSection("IncomeSleeve"));
         
         // Application Insights — registration is inert until APPLICATIONINSIGHTS_CONNECTION_STRING
         // is set (it is NOT set in local.settings.json or any deployed config today): with no
@@ -123,6 +129,27 @@ var host = new HostBuilder()
         services.AddSingleton<OptionsPositionSizer>();
         services.AddSingleton<OptionsSleeveManager>();
         
+        // S6-001 income sleeve wiring. IncomeSleeveManager's ctor takes BARE
+        // IncomeConfig/ExecutionConfig/IncomeUniverse — bare-type resolution is exactly the
+        // S5-004r boot-crash class (DI validation kills the worker at startup if any of these
+        // is unresolvable, and the unit suite never builds the full host graph). The factory
+        // delegates below make them resolvable from the one bound TradingSystemConfig; the
+        // host-boot smoke (tools/ci/host-boot-smoke.sh, S6-002) is the gate that proves it.
+        services.AddSingleton<IncomeUniverse>();
+        services.AddSingleton(sp =>
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TradingSystemConfig>>().Value.Income);
+        services.AddSingleton(sp =>
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<TradingSystemConfig>>().Value.Execution);
+        services.AddSingleton<TradingSystem.Strategies.Income.IncomeSleeveManager>();
+        // Thin-timer pipeline (Default D2) + digest-class plan report (Default D6). The report
+        // reuses the SAME webhook/config as the other Discord senders (no new secret) but gets
+        // its own named client so the senders stay distinguishable. 8s send bound: a report
+        // POST must never hang the reinvest run (constraint 4 — timeout surfaces as
+        // OperationCanceledException and is swallowed by the report's no-throw contract).
+        services.AddHttpClient("DiscordIncomeReport", c => c.Timeout = TimeSpan.FromSeconds(8));
+        services.AddSingleton<IIncomeReportService, TradingSystem.Functions.DiscordIncomeReportService>();
+        services.AddSingleton<IIncomeReinvestService, TradingSystem.Functions.IncomeReinvestService>();
+
         // AI Service — Claude regime detection with rule-based fallback (ADR-003, ADR-012).
         // Registration (config bind + gated client wiring, incl. the named ClaudeGateway client)
         // is centralized in ClaudeServiceRegistration so it is unit-testable (S2-004, ADR-029).
