@@ -6,6 +6,13 @@
 
 **Project Type:** api (complex multi-service application)
 
+> **State note (2026-06-10):** Phase 3 paper validation is live since 2026-06-11. The
+> validation gate is forward paper trading per ADR-030 (backtesting is a research aid, not
+> the gate). The Functions worker is locally hosted for the validation window per ADR-031 —
+> the Azure architecture below remains the target for a future LIVE posture. PDR-004
+> validation thresholds are resolved (S4-001). Current state of record: DECISIONS.md
+> Project State Snapshot.
+
 ---
 
 ## Executive Summary
@@ -225,13 +232,13 @@
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
 | Language | C# / .NET 8 | Developer's 12-year expertise, strong typing |
-| Orchestration | Azure Functions (Isolated Worker) | Serverless, cost-effective for scheduled tasks |
+| Orchestration | Azure Functions (Isolated Worker) | Serverless, cost-effective for scheduled tasks. Locally hosted worker during the paper-validation window per ADR-031; Azure remains the LIVE-posture target |
 | Database | Azure Cosmos DB (Serverless) | Flexible schema, low cost at low volume |
 | Broker API | Interactive Brokers TWS API | Full options support, paper trading, institutional grade |
 | AI Analysis | Claude API | Cost-effective regime detection (~$2-5/mo) |
 | Notifications | Discord Webhooks | Free, mobile-friendly, rich embeds |
 | Secrets | Azure Key Vault | Enterprise-grade secret management |
-| Monitoring | Application Insights | Built-in Azure integration |
+| Monitoring | Application Insights | Built-in Azure integration. Not enabled during paper validation — gated behind the KD-006 discord.com URI-redaction requirement (see DECISIONS.md Known Debt) |
 | Market Data | Polygon.io | Reliable earnings calendar ($29/month) |
 | Testing | xUnit, Moq | .NET standard |
 
@@ -448,6 +455,7 @@ The following actions **REQUIRE explicit human approval:**
 
 ### Phase 3: Validation & Go-Live (Weeks 15-28+)
 **Duration:** 14+ weeks
+**Status (2026-06-10):** In progress — paper trading runs since 2026-06-11 on the locally hosted worker per ADR-031; earliest gate evaluation on/after 2026-09-03.
 
 | Week | Focus | Deliverables |
 |------|-------|--------------|
@@ -558,4 +566,4 @@ Unknowns should not block ongoing development. Instead, Claude must prompt the o
 
 ---
 
-*Version: 2.1 | Last Updated: 2026-02-16*
+*Version: 2.2 | Last Updated: 2026-06-10*
