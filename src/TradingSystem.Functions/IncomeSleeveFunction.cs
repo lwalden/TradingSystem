@@ -12,13 +12,27 @@ public class IncomeSleeveFunction
 {
     private readonly ILogger<IncomeSleeveFunction> _logger;
     private readonly TradingSystemConfig _config;
+    private readonly Func<DateTime> _utcNow;
 
     public IncomeSleeveFunction(
         ILogger<IncomeSleeveFunction> logger,
         IOptions<TradingSystemConfig> config)
+        : this(logger, config, () => DateTime.UtcNow)
+    {
+    }
+
+    /// <summary>
+    /// Testable-clock seam (S6-007, Default D1): tests pin the day-of-month guard;
+    /// S6-001 reuses this seam for the first-trading-weekday gate.
+    /// </summary>
+    internal IncomeSleeveFunction(
+        ILogger<IncomeSleeveFunction> logger,
+        IOptions<TradingSystemConfig> config,
+        Func<DateTime> utcNow)
     {
         _logger = logger;
         _config = config.Value;
+        _utcNow = utcNow;
     }
 
     /// <summary>
@@ -30,7 +44,7 @@ public class IncomeSleeveFunction
         CancellationToken cancellationToken)
     {
         // Only run on the first weekday of the month
-        if (DateTime.UtcNow.Day > 7) return;
+        if (_utcNow().Day > 7) return;
         
         var runId = Guid.NewGuid().ToString("N")[..8];
         _logger.LogInformation("Starting monthly income reinvest. RunId: {RunId}", runId);
@@ -64,7 +78,7 @@ public class IncomeSleeveFunction
         [TimerTrigger("0 0 14 1-7 1,4,7,10 1-5")] TimerInfo timer,
         CancellationToken cancellationToken)
     {
-        if (DateTime.UtcNow.Day > 7) return;
+        if (_utcNow().Day > 7) return;
 
         var runId = Guid.NewGuid().ToString("N")[..8];
         _logger.LogInformation("Starting quarterly quality audit. RunId: {RunId}", runId);
@@ -79,7 +93,11 @@ public class IncomeSleeveFunction
             // 5. Generate reduction signals if needed
             // 6. Send report to owner
 
-            _logger.LogInformation("Quarterly quality audit complete. RunId: {RunId}", runId);
+            // S6-007 stub honesty: during the paper-validation run, logs are evidence.
+            // Do NOT log "complete" for work that never happened.
+            _logger.LogWarning(
+                "IncomeSleeve_QuarterlyAudit is not implemented — skipped (deferred per backlog, S7+). RunId: {RunId}",
+                runId);
         }
         catch (Exception ex)
         {
