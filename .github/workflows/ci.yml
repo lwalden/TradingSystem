@@ -86,7 +86,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -94,6 +94,16 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
+
+      # Cache the npm download cache for the two pinned global tools - a cold
+      # install takes minutes and occasionally flakes on registry hiccups.
+      # Key includes the pinned versions string so a deliberate version bump
+      # invalidates the cache.
+      - name: Cache npm global tool downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-azurite@3.35.0-azure-functions-core-tools@4.8.0
 
       # Pinned to the versions verified on the dev box (Default D9: pin the
       # exact npm package version that works; bump deliberately).
@@ -113,13 +123,20 @@ jobs:
           SMOKE_LOG: ${{ runner.temp }}/host-boot-smoke.log
         run: bash tools/ci/host-boot-smoke.sh
 
+      # Guard: the captured host log can contain the storage connection string
+      # (and any account key in it) if a real AzureWebJobsStorage is ever
+      # passed to this job. Only UseDevelopmentStorage=true (local Azurite,
+      # well-known dev credentials) is permitted in this job - never point it
+      # at a real storage account.
+      # cancelled() included so a timeout-minutes kill still uploads the log.
       - name: Upload host log
         uses: actions/upload-artifact@v7
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: host-boot-smoke-log
           path: ${{ runner.temp }}/host-boot-smoke.log
           if-no-files-found: ignore
+          retention-days: 7
 
   # ============================================================================
   # Security Scanning

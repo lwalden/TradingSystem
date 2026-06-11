@@ -24,6 +24,9 @@
 #   - Azurite reachable (the blob endpoint is probed before starting the
 #     host, so a missing Azurite fails fast with a clear message).
 #   - Azure Functions Core Tools v4 (`func`) on PATH.
+#   - jq (optional): enables the unexpected-function WARN check. When jq is
+#     absent that check is silently skipped - the required-function
+#     assertions are grep-based and unaffected.
 #
 # Environment (all optional; defaults shown; values are never echoed because
 # the storage connection string can carry an account key):
@@ -60,8 +63,9 @@
 #   bash tools/ci/host-boot-smoke.sh scan-log <logfile>
 #     runs only the log-signature scan against an existing log file.
 #
-# Exit codes: 0 = boot verified; non-zero = any failure (missing function,
-# failure signature, deadline expired, host died early, Azurite unreachable).
+# Exit codes: 0 = pass; 1 = any failure (missing function, failure signature,
+# deadline expired, host died early, Azurite unreachable). Failure modes are
+# NOT differentiated by exit code - stderr output is the diagnostic.
 # =============================================================================
 set -euo pipefail
 
@@ -69,6 +73,10 @@ set -euo pipefail
 PORT="${PORT:-7071}"
 DEADLINE_SECONDS="${DEADLINE_SECONDS:-180}"
 PROBE_INTERVAL_SECONDS="${PROBE_INTERVAL_SECONDS:-3}"
+# Source of truth for this default: the four [Function]-decorated methods in
+# src/TradingSystem.Functions (DailyOrchestrator.cs, IncomeSleeveFunction.cs).
+# When a function is added there, this list must be updated in the same PR -
+# the unexpected-extras WARN below is the drift detector for that.
 EXPECTED_FUNCTIONS="${EXPECTED_FUNCTIONS:-DailyOrchestrator_PreMarket DailyOrchestrator_EndOfDay IncomeSleeve_MonthlyReinvest IncomeSleeve_QuarterlyAudit}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -137,7 +145,7 @@ if [[ "$AzureWebJobsStorage" == *"BlobEndpoint="* ]]; then
   blob_probe_url="$(printf '%s' "$AzureWebJobsStorage" | grep -oE 'BlobEndpoint=[^;]+' | cut -d= -f2-)"
 fi
 curl --max-time 5 -s -o /dev/null "$blob_probe_url" \
-  || fail "storage (Azurite) not reachable at $blob_probe_url - start Azurite first"
+  || fail "storage (Azurite) not reachable at $blob_probe_url (expected blob port: 10000 unless AzureWebJobsStorage overrides it). Locally: ensure the TradingSystem-Azurite scheduled task is running, or point AzureWebJobsStorage at your Azurite instance"
 
 # --- Start the host -------------------------------------------------------------
 echo "Starting Functions host on port $PORT (log: $SMOKE_LOG)"
@@ -189,6 +197,7 @@ while [[ $SECONDS -lt $deadline ]]; do
     echo "--- host log tail ---" >&2
     tail -n 60 "$SMOKE_LOG" >&2 || true
     scan_log_for_failures "$SMOKE_LOG" || true
+    echo "full captured host log: $SMOKE_LOG" >&2
     fail "func host process exited before the admin endpoint came up"
   fi
 
@@ -210,6 +219,7 @@ done
 if [[ $all_present -ne 1 ]]; then
   echo "--- host log tail ---" >&2
   tail -n 60 "$SMOKE_LOG" >&2 || true
+  echo "full captured host log: $SMOKE_LOG" >&2
   if [[ -n "$response" ]]; then
     for fn in $EXPECTED_FUNCTIONS; do
       has_function "$response" "$fn" \
@@ -237,7 +247,8 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 # --- Log-signature scan (boot can "succeed" while the log shows a sick host) ----
-scan_log_for_failures "$SMOKE_LOG"
+scan_log_for_failures "$SMOKE_LOG" \
+  || fail "failure signatures found in host log (full captured host log: $SMOKE_LOG)"
 
 echo "OK: host booted on port $PORT; all expected functions registered:"
 for fn in $EXPECTED_FUNCTIONS; do
