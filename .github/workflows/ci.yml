@@ -40,6 +40,8 @@ jobs:
               - 'tests/**'
               - '*.sln'
               - '**/*.csproj'
+              - 'tools/ci/**'
+              - '.github/workflows/ci.yml'
 
   # ============================================================================
   # Build and Test (.NET 8)
@@ -73,6 +75,70 @@ jobs:
           path: '**/test-results.trx'
 
   # ============================================================================
+  # Host-Boot Smoke (S6-002)
+  # ============================================================================
+  # The unit suite never boots the Functions host, so a dead host can ship
+  # behind green tests (S5-004r). This job boots the real isolated worker
+  # against Azurite and asserts all 4 timer functions register with no
+  # TypeLoadException and no worker-restart loop. Zero secrets: storage is
+  # UseDevelopmentStorage=true (script default) pointed at local Azurite.
+  host-boot-smoke:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      # Cache the npm download cache for the two pinned global tools - a cold
+      # install takes minutes and occasionally flakes on registry hiccups.
+      # Key includes the pinned versions string so a deliberate version bump
+      # invalidates the cache.
+      - name: Cache npm global tool downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-azurite@3.35.0-azure-functions-core-tools@4.8.0
+
+      # Pinned to the versions verified on the dev box (Default D9: pin the
+      # exact npm package version that works; bump deliberately).
+      - name: Install Azurite + Azure Functions Core Tools v4
+        run: npm install -g azurite@3.35.0 azure-functions-core-tools@4.8.0
+
+      - name: Start Azurite
+        run: |
+          mkdir -p "$RUNNER_TEMP/azurite"
+          nohup azurite --silent --location "$RUNNER_TEMP/azurite" > "$RUNNER_TEMP/azurite/azurite.log" 2>&1 &
+
+      - name: Build
+        run: dotnet build --configuration Release
+
+      - name: Run host-boot smoke
+        env:
+          SMOKE_LOG: ${{ runner.temp }}/host-boot-smoke.log
+        run: bash tools/ci/host-boot-smoke.sh
+
+      # Guard: the captured host log can contain the storage connection string
+      # (and any account key in it) if a real AzureWebJobsStorage is ever
+      # passed to this job. Only UseDevelopmentStorage=true (local Azurite,
+      # well-known dev credentials) is permitted in this job - never point it
+      # at a real storage account.
+      # cancelled() included so a timeout-minutes kill still uploads the log.
+      - name: Upload host log
+        uses: actions/upload-artifact@v7
+        if: failure() || cancelled()
+        with:
+          name: host-boot-smoke-log
+          path: ${{ runner.temp }}/host-boot-smoke.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ============================================================================
   # Security Scanning
   # ============================================================================
   security:
@@ -90,7 +156,7 @@ jobs:
   # ============================================================================
   all-checks:
     if: always()
-    needs: [changes, build, security]
+    needs: [changes, build, host-boot-smoke, security]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
