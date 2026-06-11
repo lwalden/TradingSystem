@@ -99,7 +99,7 @@ decision): the run computes the reinvestment plan and reports it; it places noth
   proof the timer ran, not a failure.
 - Other weekday firings in the Jul 1–7 window log an Information skip in the worker log
   (`Monthly reinvest skipped — Not the first trading weekday of the month …`) and send
-  nothing — expected.
+  nothing — expected (worker console or `%LOCALAPPDATA%\TradingSystem\logs` — section 5).
 - If the gate day is a market holiday, the run degrades like any closed-market day — the
   recommendation-only output is benign (accepted edge; no holiday calendar on this timer).
 - The income sleeve's **PDR-004 ≥12-week clock starts at its first actual trade**, not at
@@ -109,7 +109,8 @@ decision): the run computes the reinvestment plan and reports it; it places noth
 ops/triage step), confirm all of:
 
 1. the prior recommendation-only `Income Reinvest Plan — <date>` Discord report arrived and
-   its proposed buys look sane;
+   its proposed tickers match known income-sleeve holdings, quantities are non-zero, and
+   estimated cost is within the available-cash estimate shown in the message;
 2. TWS is running in **paper** mode;
 3. the IB **LIVE** account is NOT the active TWS session.
 
@@ -157,6 +158,9 @@ failure, unbordered/neutral = normal digest.**
   in section 5.
 - **Dead-man gap (worker not running)** — no worker means no runs, no alerts, and no
   "I'm down" message. Nothing can tell you from Discord. Section 5, first entry.
+- **`IncomeSleeve_QuarterlyAudit` not implemented (S7+)** — fires on weekdays in the
+  Jul 1–7 window; one Warning log line, no Discord message; see section 3 for the exact
+  log line.
 
 ## 5. Failure triage
 
