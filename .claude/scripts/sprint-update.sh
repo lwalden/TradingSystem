@@ -13,11 +13,24 @@
 #   bash .claude/scripts/sprint-update.sh sprint-status in-progress
 
 SPRINT_FILE="SPRINT.md"
+METRICS_SCRIPT="$(dirname "$0")/sprint-metrics.sh"
 
 die() { echo "Error: $1" >&2; exit 1; }
 
+# Best-effort sprint-metrics emission (observability only). Guarded by jq
+# availability and suffixed `|| true` — a metrics failure must NEVER fail the
+# SPRINT.md update (the update path is sprint-critical, metrics are not).
+emit_metrics() {
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "note: jq not found — sprint metrics not recorded" >&2
+    return 0
+  fi
+  [ -f "$METRICS_SCRIPT" ] || return 0
+  bash "$METRICS_SCRIPT" "$@" >/dev/null 2>&1 || true
+}
+
 if [ $# -lt 1 ]; then
-  die "Usage: sprint-update.sh <status|postmerge|sprint-status> [issue-id] <value>"
+  die "Usage: sprint-update.sh <status|postmerge|sprint-status|phase> [issue-id] <value>"
 fi
 
 subcmd="$1"
@@ -50,6 +63,8 @@ case "$subcmd" in
       print
     }
     ' "$SPRINT_FILE" > "${SPRINT_FILE}.tmp" && mv "${SPRINT_FILE}.tmp" "$SPRINT_FILE"
+
+    emit_metrics status "$issue_id" "$new_value"
     ;;
 
   postmerge)
@@ -89,6 +104,10 @@ case "$subcmd" in
     /^\*\*Status:\*\*/ { print "**Status:** " val; next }
     { print }
     ' "$SPRINT_FILE" > "${SPRINT_FILE}.tmp" && mv "${SPRINT_FILE}.tmp" "$SPRINT_FILE"
+
+    # Recorded in the phases timeline (the metrics script has no sprint-level
+    # status concept; prefixing keeps it distinguishable from phase names).
+    emit_metrics phase "sprint-status:$new_value"
     ;;
 
   phase)
@@ -107,6 +126,8 @@ case "$subcmd" in
       { print }
       ' "$SPRINT_FILE" > "${SPRINT_FILE}.tmp" && mv "${SPRINT_FILE}.tmp" "$SPRINT_FILE"
     fi
+
+    emit_metrics phase "$new_value"
     ;;
 
   *)
