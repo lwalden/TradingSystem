@@ -21,13 +21,16 @@ die() { echo "Error: $1" >&2; exit 1; }
 # availability and suffixed `|| true` — a metrics failure must NEVER fail the
 # SPRINT.md update (the update path is sprint-critical, metrics are not).
 emit_metrics() {
-  command -v jq >/dev/null 2>&1 || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "note: jq not found — sprint metrics not recorded" >&2
+    return 0
+  fi
   [ -f "$METRICS_SCRIPT" ] || return 0
   bash "$METRICS_SCRIPT" "$@" >/dev/null 2>&1 || true
 }
 
 if [ $# -lt 1 ]; then
-  die "Usage: sprint-update.sh <status|postmerge|sprint-status> [issue-id] <value>"
+  die "Usage: sprint-update.sh <status|postmerge|sprint-status|phase> [issue-id] <value>"
 fi
 
 subcmd="$1"

@@ -75,6 +75,7 @@ case "$subcmd" in
   "sprintId": "${sprint_id}",
   "startedAt": "${NOW}",
   "completedAt": null,
+  "phases": [],
   "items": [],
   "totals": {
     "planned": 0,
@@ -101,7 +102,7 @@ ENDJSON
       fi
       # Add new item and increment planned count
       jq --arg id "$item_id" --arg ts "$NOW" '
-        .items += [{"id": $id, "startedAt": $ts, "completedAt": null, "contextCycles": 0, "reviewFindings": 0, "reworkCount": 0}]
+        .items += [{"id": $id, "startedAt": $ts, "completedAt": null, "contextCycles": 0, "reviewFindings": 0, "reworkCount": 0, "transitions": []}]
         | .totals.planned += 1
       ' "$METRICS_FILE" > "${METRICS_FILE}.tmp" && mv "${METRICS_FILE}.tmp" "$METRICS_FILE"
     else
