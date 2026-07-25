@@ -11,10 +11,11 @@
     Path.Combine(LocalStorage:DataDirectory, "snapshots.json") with DataDirectory="data"
     (relative), resolved against the worker's working directory. The
     TradingSystem-FuncHost scheduled task action is
-    `cmd /c cd /d D:\Source\TradingSystem\src\TradingSystem.Functions && func start ...`,
-    so the worker cwd — verified against the registered task on 2026-06-10 — is
-    D:\Source\TradingSystem\src\TradingSystem.Functions and the file of record is
-    D:\Source\TradingSystem\src\TradingSystem.Functions\data\snapshots.json (the
+    `cmd /c cd /d C:\repos\TradingSystem\src\TradingSystem.Functions && func start ...`,
+    so the worker cwd (originally verified against the registered task on 2026-06-10,
+    path updated for the 2026-07 machine migration) is
+    C:\repos\TradingSystem\src\TradingSystem.Functions and the file of record is
+    C:\repos\TradingSystem\src\TradingSystem.Functions\data\snapshots.json (the
     -SnapshotPath default). JSON is camelCase with ISO-8601 dates ("date" property).
 
     Trading-day logic is weekday-only (Mon-Fri). Market-holiday false positives
@@ -55,8 +56,8 @@
 [CmdletBinding()]
 param(
     [DateTime]$Date = (Get-Date),
-    [string]$SnapshotPath = 'D:\Source\TradingSystem\src\TradingSystem.Functions\data\snapshots.json',
-    [string]$SettingsPath = 'D:\Source\TradingSystem\src\TradingSystem.Functions\local.settings.json',
+    [string]$SnapshotPath = 'C:\repos\TradingSystem\src\TradingSystem.Functions\data\snapshots.json',
+    [string]$SettingsPath = 'C:\repos\TradingSystem\src\TradingSystem.Functions\local.settings.json',
     [switch]$WhatIf
 )
 

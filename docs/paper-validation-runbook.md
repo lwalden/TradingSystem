@@ -17,7 +17,7 @@ The Azure Functions isolated worker runs **locally on the dev box**, not in Azur
   worker cannot reach either. Full rationale and alternatives: ADR-031 in `DECISIONS.md`.
 - Start the worker:
   ```powershell
-  cd D:\Source\TradingSystem\src\TradingSystem.Functions
+  cd C:\repos\TradingSystem\src\TradingSystem.Functions
   func start          # or: dotnet run
   ```
 - **Machine-on requirement:** the dev box and the worker must be up across the day's timer
@@ -44,7 +44,7 @@ worker admin-endpoint 4-function list (steps 3–5), and the snapshots data dire
    (In PowerShell, bare `curl` aliases `Invoke-WebRequest` — use `curl.exe` or
    `Invoke-RestMethod http://localhost:3131/health`.) 200 = up. If it is down, the system degrades to deterministic rule-based regime
    classification (ADR-029/ADR-030) — **this is expected behavior, not an incident**.
-   Restart the gateway (`D:\Source\claude-gateway`) when convenient.
+   Restart the gateway (`C:\repos\claude-gateway`) when convenient.
 3. **Functions worker** started (`func start` per section 1).
 4. **Host boot smoke:** after `func start`, the function-list banner must appear with **no
    `TypeLoadException`** (or repeated "worker process" restarts) in the startup output.
@@ -200,7 +200,7 @@ read from the gitignored `local.settings.json` (`Discord:WebhookUrl`) and is nev
 hooks, or agent pipelines:
 
 ```powershell
-pwsh -NoProfile -File D:\Source\TradingSystem\tools\ops\Register-GapDayMonitorTask.ps1
+pwsh -NoProfile -File C:\repos\TradingSystem\tools\ops\Register-GapDayMonitorTask.ps1
 ```
 
 Run this as the normal dev-box user — no elevation required; the task is registered to
