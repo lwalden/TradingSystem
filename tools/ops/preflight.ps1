@@ -28,7 +28,7 @@ param(
     [int]$TwsPort = 7497,
     [string]$GatewayHealthUrl = 'http://localhost:3131/health',
     [string]$WorkerAdminUrl = 'http://127.0.0.1:7071/admin/functions',
-    [string]$DataDirectory = 'D:\Source\TradingSystem\src\TradingSystem.Functions\data'
+    [string]$DataDirectory = 'C:\repos\TradingSystem\src\TradingSystem.Functions\data'
 )
 
 Set-StrictMode -Version Latest
